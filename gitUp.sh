@@ -1,6 +1,15 @@
+# =======================================
+# Author: Hung Tran-Nam
+# Email: namhung34.info@gmail.com
+# Repo: https://github.com/hungtrannam/probclust
+# =======================================
+# File: gitUp.sh
+# Description: Script to initialize a Git repository and push to a remote repository
+
+
 #!/bin/bash
 
-REPO_URL="git@github.com:hungtrannam/interval-TS.git"
+REPO_URL="git@github.com:hungtrannam/probclust.git"
 BRANCH="main"
 DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
 MSG="[$DATETIME] Initial commit"
