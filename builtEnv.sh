@@ -1,3 +1,11 @@
+# =======================================
+# Author: Hung Tran-Nam
+# Email: namhung34.info@gmail.com
+# Repo: https://github.com/hungtrannam/probclust
+# =======================================
+# File: builtEnv.sh
+# Description: Script to set up a Python virtual environment with required packages
+
 #!/bin/bash
 
 set -e  # Exit script on any error
@@ -33,7 +41,7 @@ pip install --no-cache-dir \
     argparse torch torchvision torchmetrics \
     scikit-learn einops optunahub cmaes\
     gpustat statsmodels gputil \
-    shap shaptime tensorflow
+    shap ipykernel
 
 
 ############## Save environment ##############
