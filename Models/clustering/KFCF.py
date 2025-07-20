@@ -2,7 +2,7 @@ import numpy as np
 from utils.dist import Dist
 
 class Model:
-    def __init__(self, pdf_matrix, grid_x, num_clusters=3, fuzziness=2, max_iterations=100,
+    def __init__(self, grid_x, num_clusters=3, fuzziness=2, max_iterations=100,
                  tolerance=1e-5, kernel_type='L2', gamma=1.0, bandwidth=0.01):
         """
         Kernel Fuzzy C-Means clustering for probability density functions.
@@ -18,7 +18,6 @@ class Model:
         - gamma: float, kernel parameter
         - bandwidth: float, integration bandwidth
         """
-        self.pdf_matrix = pdf_matrix.T  # [num_pdfs, num_points]
         self.grid_x = grid_x
         self.num_clusters = num_clusters
         self.fuzziness = fuzziness
@@ -27,16 +26,6 @@ class Model:
         self.kernel_type = kernel_type
         self.gamma = gamma
         self.bandwidth = bandwidth
-
-        self.num_pdfs = self.pdf_matrix.shape[0]
-        self.membership_matrix = np.random.dirichlet(np.ones(num_clusters), size=self.num_pdfs)  # [num_pdfs, num_clusters]
-
-        # Initialize cluster centroids (prototypes) as random pdfs
-        initial_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
-        self.centroids = self.pdf_matrix[initial_indices]  # [num_clusters, num_points]
-
-        # Precompute kernel matrix
-        self.kernel_matrix = self._compute_kernel_matrix()
 
     def _kernel_function(self, pdf1, pdf2):
         dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
@@ -57,7 +46,18 @@ class Model:
                 K[i, j] = K[j, i] = val
         return K
 
-    def fit(self, verbose=True):
+    def fit(self, pdf_matrix, verbose=True):
+        self.pdf_matrix = pdf_matrix.T
+        self.num_pdfs = self.pdf_matrix.shape[0]
+        self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)  # [num_pdfs, num_clusters]
+
+        # Initialize cluster centroids (prototypes) as random pdfs
+        initial_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
+        self.centroids = self.pdf_matrix[initial_indices]  # [num_clusters, num_points]
+
+        # Precompute kernel matrix
+        self.kernel_matrix = self._compute_kernel_matrix()
+        
         eps_small = 1e-100
 
         for iteration in range(self.max_iterations):
