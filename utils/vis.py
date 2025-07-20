@@ -8,6 +8,7 @@
 # =======================================
 
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
 import os
 
@@ -65,10 +66,10 @@ def plotPDF(grid, pdfs, savefile=None):
     plt.figure()
     temp(fontsize=18, w=12, h=8, u='centimeters')
 
-    n_pdfs = pdfs.shape[1]
+    n_pdfs = pdfs.shape[0]
     
     for i in range(n_pdfs):
-        plt.plot(grid, pdfs[:, i], lw = 2, color='black')
+        plt.plot(grid, pdfs[i,:], lw = 2, color='black')
     plt.tight_layout()
 
     if savefile:
@@ -84,16 +85,16 @@ def plotPDF_Theta(grid, pdfs, theta, savefile=None):
     plt.figure()
     temp(fontsize=18, w=12, h=8, u='centimeters')
 
-    n_pdfs = pdfs.shape[1]
-    n_clusters = theta.shape[1]
+    n_pdfs = pdfs.shape[0]
+    n_clusters = theta.shape[0]
 
     # Vẽ các pdfs
     for i in range(n_pdfs):
-        plt.plot(grid, pdfs[:, i], lw=2, color='gray', linestyle='--', alpha=0.6)
+        plt.plot(grid, pdfs[i, :], lw=2, color='gray', linestyle='--', alpha=0.6)
 
     # Vẽ các prototype
     for j in range(n_clusters):
-        plt.plot(grid, theta[:, j], lw=2, linestyle='-', color='black')
+        plt.plot(grid, theta[j, :], lw=2, linestyle='-', color='black')
 
     plt.tight_layout()
 
@@ -127,3 +128,157 @@ def plotHeatmap_U(U, savefile=None):
     if savefile:
         os.makedirs('figs', exist_ok=True)
         plt.savefig(savefile, bbox_inches='tight')
+
+# ==========================================
+
+def plot_beta_function(x_grid, beta_func_hat, savefile = None):
+    """
+    Vẽ hàm beta ước lượng.
+    """
+    temp(fontsize=20)
+    plt.figure(figsize=(7,6))
+    plt.plot(x_grid, beta_func_hat, linewidth=3, color='black')
+    plt.xlabel('x')
+    plt.ylabel(r'$\widehat{\beta}(x)$')
+    plt.axhline(0, color='black', linestyle='--', linewidth=2)
+
+    plt.tight_layout()
+    
+    if savefile:
+        os.makedirs('figs', exist_ok=True)
+        plt.savefig(savefile, bbox_inches='tight')
+    plt.close()
+
+
+# =======================================
+
+
+def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
+
+    """ Vẽ cây phân cụm với heatmap tam giác trên.
+    """
+    def get_leaf_order(node='root'):
+        """
+        Lấy thứ tự lá của cây phân cụm.
+        """
+        if node + '0' not in tree and node + '1' not in tree:
+            return tree[node]['indices']
+        order = []
+        if node + '0' in tree:
+            order.extend(get_leaf_order(node + '0'))
+        if node + '1' in tree:
+            order.extend(get_leaf_order(node + '1'))
+        return order
+
+    def compute_positions(node, leaf_x, positions, heights):
+        """
+        Tính toán vị trí (x, y) cho mỗi node trong cây.
+        """
+        if node + '0' not in tree and node + '1' not in tree:
+            leaf = tree[node]['indices'][0]
+            x = leaf_x[leaf]
+            positions[node] = x
+            heights[node] = 0
+            return x, 0
+        child_xs, child_ys = [], []
+        if node + '0' in tree:
+            cx0, cy0 = compute_positions(node + '0', leaf_x, positions, heights)
+            child_xs.append(cx0)
+            child_ys.append(cy0)
+        if node + '1' in tree:
+            cx1, cy1 = compute_positions(node + '1', leaf_x, positions, heights)
+            child_xs.append(cx1)
+            child_ys.append(cy1)
+        avg_x = sum(child_xs) / len(child_xs)
+        height = max(child_ys) + 1
+        positions[node] = avg_x
+        heights[node] = height
+        return avg_x, height
+
+    def draw_dendrogram(ax, node, positions, heights):
+        """ Vẽ dendrogram cho node hiện tại.
+        """
+        if node + '0' not in tree and node + '1' not in tree:
+            return
+        x0, y0 = positions[node], heights[node]
+        child_xs = []
+        for child in [node + '0', node + '1']:
+            if child in tree:
+                x1, y1 = positions[child], heights[child]
+                child_xs.append(x1)
+                ax.plot([x1, x1], [y1, y0], color='black', linewidth=1)
+                draw_dendrogram(ax, child, positions, heights)
+        if child_xs:
+            ax.plot([min(child_xs), max(child_xs)], [y0, y0], color='black', linewidth=1)
+
+    # Lấy thứ tự lá
+    leaf_order = get_leaf_order()
+    unique_leaf_order = []
+    for leaf in leaf_order:
+        if leaf not in unique_leaf_order:
+            unique_leaf_order.append(leaf)
+    leaf_x = {leaf: i for i, leaf in enumerate(unique_leaf_order)}
+
+    # Tính (x, y)
+    positions, heights = {}, {}
+    compute_positions('root', leaf_x, positions, heights)
+
+    # reorder matrix
+    reorder_idx = [leaf for leaf in unique_leaf_order]
+    dist_reordered = dist_matrix[np.ix_(reorder_idx, reorder_idx)]
+
+    # Vẽ figure chia 2 phần: trên (dendrogram) và dưới (heatmap)
+    fig = plt.figure(figsize=(5, 5))
+    gs = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.05)
+
+    # === Dendrogram ===
+    ax_dendro = fig.add_subplot(gs[0])
+    draw_dendrogram(ax_dendro, 'root', positions, heights)
+    for leaf, x in leaf_x.items():
+        ax_dendro.plot(x, 0, 'o', color='black', markersize=2)
+        ax_dendro.text(x, -0.3, str(leaf), ha='center', va='top', fontsize=8)
+    ax_dendro.set_ylim(-0.5, max(heights.values()) + 0.5)
+    ax_dendro.set_xlim(-0.5, len(leaf_x) - 0.5)
+
+    ax_dendro.axis('off')
+
+    # === Heatmap tam giác trên ===
+    ax_heat = fig.add_subplot(gs[1])
+
+    n = dist_reordered.shape[0]
+    # Flip matrix
+    dist_flipped = np.flipud(dist_reordered)
+
+    # Grid
+    X, Y = np.meshgrid(np.arange(n + 1) - 0.5, np.arange(n + 1) - 0.5)
+
+    # Plot
+    pcm = ax_heat.pcolormesh(
+        X, Y, dist_flipped,
+        cmap='Greys_r',
+        shading='flat',
+        edgecolors='none'
+    )
+
+    # Ticks
+    ax_heat.set_xticks([])
+    ax_heat.set_xticklabels([])
+    ax_heat.set_yticks(np.arange(n))
+    ax_heat.set_yticklabels(unique_leaf_order[::-1], fontsize=8)  # reverse labels
+
+    # Annotate
+    if verbose:
+        for i in range(n):
+            for j in range(n):
+                if i <= j:
+                    value = dist_reordered[n - 1 - i, j]
+                    ax_heat.text(j, i, f"{value:.2f}", ha='center', va='center', fontsize=6, color='white')
+
+    # Colorbar
+    fig.colorbar(pcm, ax=ax_heat, orientation='horizontal', fraction=0.08, pad=0.05).ax.tick_params(labelsize=8)
+
+    # Lưu file
+    if savefile:
+        os.makedirs('figs', exist_ok=True)
+        plt.savefig(savefile, bbox_inches='tight', dpi=600)
+    plt.close(fig)

@@ -4,11 +4,11 @@ from data.data_loader import generateGauss, generateUniform
 from utils.dist import Dist
 from utils.integral import int, grid
 from utils.vis import *
-from Models.clustering import FCF, EM, KCF, KFCF
+from Models.clustering import FCF, EM, KCF, KFCF, HCF
 
 # Tạo grid
 h = 0.01
-x, _ = grid(h, start=-10, end=20)
+x, _ = grid(h, start=-10, end=25)
 
 mu = np.array([0.3, 4.0, 9.1, 1.0, 5.5, 8.0, 4.8])
 sig = np.ones_like(mu)
@@ -27,29 +27,41 @@ eps = 1e-6
 
 
 # Khởi tạo và huấn luyện
-clusterer = KFCF.Model(F_data, x, 
-                     kernel_type='L2',
-                    # distance_metric='L2',
-                    num_clusters=c_clust,
-                    max_iterations=max_iter,
-                    tolerance=eps,
-                    bandwidth=h
+# clusterer = HCF.Model(
+#     grid_x = x,
+#     kernel_type='L2',
+#     # distance_metric='L2',
+#     num_clusters=c_clust,
+#     max_iterations=max_iter,
+#     tolerance=eps,
+#     bandwidth=h
+# )
+cluster = HCF.Model(
+    grid_x=x,
+    max_depth=7,
+    min_cluster_size=1,
+    linkage='ward',  # 'single', 'complete', 'average', 'centroid', 'wards
+    distance_metric='L2',  # hoặc 'L1', 'H', 'BC', 'W2'
+    bandwidth=h
 )
-clusterer.fit()
-U, Theta = clusterer.get_results()
+cluster.fit(F_data)
+cluster.print_tree()
 
-print("Cluster labels:", U)
+plot_tree(cluster.tree, cluster.dist_matrix, savefile=f'figs/tree_{cluster.distance_metric}_{cluster.linkage}.pdf')
 
-# Vẽ heatmap nhãn (hard labels)
-plotHeatmap_U(U, savefile="figs/U.pdf")
+# U, Theta = cluster.get_results()
 
-# Vẽ trung tâm cụm
-plotPDF_Theta(x, F_data, theta=Theta, savefile='figs/V.pdf')
+# print("Cluster labels:", U)
 
-# Dự đoán nhãn cho dữ liệu mới
-f_new = generateGauss([4], sig, x)
+# # Vẽ heatmap nhãn (hard labels)
+# plotHeatmap_U(U, savefile="figs/U.pdf")
 
-U_new = clusterer.predict(f_new)
-print("Predicted labels for new data:", U_new)
+# # Vẽ trung tâm cụm
+# plotPDF_Theta(x, F_data, theta=Theta, savefile='figs/V.pdf')
 
+# # Dự đoán nhãn cho dữ liệu mới
+# f_new = generateGauss([4], sig, x)
+
+# U_new = cluster.predict(f_new)
+# print("Predicted labels for new data:", U_new)
 

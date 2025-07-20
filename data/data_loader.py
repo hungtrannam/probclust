@@ -32,7 +32,7 @@ def generateGauss(mu_list, sigma_list, grid, savefile=None):
         pdf = norm.pdf(grid, loc=mu, scale=sigma)
         pdfs.append(pdf)
 
-    pdfs = np.array(pdfs).T  # shape: (len(grid), n_pdfs)
+    pdfs = np.array(pdfs)  # shape: (n_pdfs, len(grid))
 
     if savefile:
         os.makedirs('dataset', exist_ok=True)
