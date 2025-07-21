@@ -3,7 +3,7 @@ from utils.dist import Dist
 
 class Model:
     def __init__(self, grid_x, num_clusters=3, max_iterations=100, tolerance=1e-5,
-                 distance_metric='L2', bandwidth=0.01):
+                 distance_metric='L2', bandwidth=0.01, seed = None):
         """
         Classic K-Means Clustering for probability density functions.
 
@@ -22,6 +22,7 @@ class Model:
         self.tolerance = tolerance
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
+        self.seed = seed
 
     def _compute_distance(self, pdf1, pdf2):
         distance_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
@@ -37,6 +38,9 @@ class Model:
     def fit(self,pdf_matrix, verbose=True):
         self.pdf_matrix = pdf_matrix  # [num_pdfs, num_points]
         self.num_pdfs, self.num_points = pdf_matrix.shape
+
+        if self.seed is not None:
+            np.random.seed(self.seed)
 
         # Initialize random cluster assignments
         self.cluster_assignments = np.random.randint(0, self.num_clusters, self.num_pdfs)
@@ -66,10 +70,16 @@ class Model:
 
             self.cluster_assignments = np.argmin(distance_matrix, axis=1)
 
-            # Check for convergence
+            # Calculate objective function
+            objective_value = np.sum([
+                self._compute_distance(self.pdf_matrix[pdf_idx, :], self.centroids[self.cluster_assignments[pdf_idx], :])
+                for pdf_idx in range(self.num_pdfs)
+            ])
+
+            # Check convergence
             num_changed = np.sum(prev_assignments != self.cluster_assignments)
             if verbose:
-                print(f"Iteration {iteration + 1}, changed assignments = {num_changed}")
+                print(f"Iteration {iteration + 1}, changed assignments = {num_changed}, objective = {objective_value:.6f}")
             if num_changed == 0:
                 if verbose:
                     print("Converged.")

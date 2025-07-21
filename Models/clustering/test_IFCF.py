@@ -3,19 +3,9 @@ from utils.dist import Dist
 
 class Model:
     def __init__(self, grid_x, num_clusters=3, fuzziness=2, max_iterations=100,
-                 tolerance=1e-5, distance_metric='L2', bandwidth=0.01, seed = None):
+                 tolerance=1e-5, distance_metric='L2', bandwidth=0.01):
         """
-        Fuzzy C-Means Clustering for probability density functions.
-
-        Parameters:
-        - pdf_matrix: np.ndarray, shape [num_pdfs, num_points]
-        - grid_x: grid points for integration / distance
-        - num_clusters: number of clusters
-        - fuzziness: fuzziness coefficient m (>1)
-        - max_iterations: maximum number of iterations
-        - tolerance: convergence threshold (epsilon)
-        - distance_metric: distance type ('L1', 'L2', 'H', 'BC', 'W2')
-        - bandwidth: bandwidth parameter for distance calculation
+        Improved Fuzzy C-Means Clustering (IFCM) for probability density functions.
         """
         self.grid_x = grid_x
         self.num_clusters = num_clusters
@@ -24,7 +14,6 @@ class Model:
         self.tolerance = tolerance
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
-        self.seed = seed
 
     def _compute_distance(self, pdf1, pdf2):
         dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
@@ -42,19 +31,13 @@ class Model:
         self.num_pdfs, self.num_points = pdf_matrix.shape
 
         # Initialize fuzzy membership matrix U [num_pdfs, num_clusters]
-        if self.seed is not None:
-            np.random.seed(self.seed)
-
         self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
 
         # Initialize centroids (cluster prototypes) [num_clusters, num_points]
         self.centroids = np.zeros((self.num_clusters, self.num_points))
-
-        # Randomly pick initial centroids from data points
         init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
         for j, idx in enumerate(init_indices):
             self.centroids[j, :] = self.pdf_matrix[idx, :]
-
 
         for iteration in range(self.max_iterations):
             # Update centroids
@@ -66,24 +49,37 @@ class Model:
 
             # Update distances
             distance_matrix = np.array([
-                [self._compute_distance(self.pdf_matrix[i, :], self.centroids[j, :]) + 1e-10
+                [self._compute_distance(self.pdf_matrix[i, :], self.centroids[j, :]) + 1e-100
                  for j in range(self.num_clusters)]
                 for i in range(self.num_pdfs)
             ])  # [num_pdfs, num_clusters]
 
-            # Update membership matrix U
+            # Calculate fci (omega)
+            hard_assignments = np.argmax(self.membership_matrix, axis=1)  # [num_pdfs]
+            counts = np.array([np.sum(hard_assignments == j) for j in range(self.num_clusters)])  # [num_clusters]
+            Sj = counts / self.num_pdfs  # [num_clusters]
+            self.fci = np.zeros(self.num_clusters)
+            self.fci = (1 - Sj) / (1 - np.min(Sj) + 1e-100)  # [num_clusters]
+
+            # Update membership matrix U (with fci)
             new_membership_matrix = np.zeros((self.num_pdfs, self.num_clusters))
             for i in range(self.num_pdfs):
+                denom = np.sum(self.fci / (distance_matrix[i, :] ** (1 / (self.fuzziness - 1))))
                 for j in range(self.num_clusters):
-                    ratio = distance_matrix[i, j] / (distance_matrix[i, :] + 1e-10)
-                    new_membership_matrix[i, j] = 1.0 / np.sum(ratio ** (2 / (self.fuzziness - 1)))
+                    new_membership_matrix[i, j] = (self.fci[j] / (distance_matrix[i, j] ** (1 / (self.fuzziness - 1)))) / (denom + 1e-10)
 
-            # Check convergence
-            delta = np.linalg.norm(new_membership_matrix - self.membership_matrix)
+            # Check convergence (based on centroids)
+            centroid_change = np.linalg.norm(self.centroids - np.array([
+                np.sum((new_membership_matrix[:, j] ** self.fuzziness)[:, np.newaxis] * self.pdf_matrix, axis=0) / 
+                (np.sum(new_membership_matrix[:, j] ** self.fuzziness) + 1e-100)
+                for j in range(self.num_clusters)
+            ]), ord=1)
+
             if verbose:
-                objective_value = np.sum((new_membership_matrix ** self.fuzziness) * distance_matrix)
-                print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {objective_value:.6f}")    
-            if delta < self.tolerance:
+                print(f"Iteration {iteration + 1}, centroid change = {centroid_change:.6e}")
+                print(f"Objective function value: {np.sum(new_membership_matrix ** self.fuzziness)}")
+
+            if centroid_change < self.tolerance:
                 if verbose:
                     print("Converged.")
                 break
@@ -93,27 +89,22 @@ class Model:
     def predict(self, new_pdfs):
         """
         Predict fuzzy membership for new pdf(s).
-
-        Parameters:
-        - new_pdfs: np.ndarray, shape [num_new_pdfs, num_points]
-
-        Returns:
-        - memberships: np.ndarray, shape [num_new_pdfs, num_clusters]
         """
         if new_pdfs.ndim == 1:
             new_pdfs = new_pdfs[np.newaxis, :]  # [1, num_points]
 
         num_new = new_pdfs.shape[0]
         memberships = np.zeros((num_new, self.num_clusters))
+        m = self.fuzziness
 
         for idx in range(num_new):
             distances = np.array([
                 self._compute_distance(new_pdfs[idx, :], self.centroids[j, :]) + 1e-10
                 for j in range(self.num_clusters)
             ])
+            denom = np.sum(self.fci / (distances ** (1 / (m - 1))))
             for j in range(self.num_clusters):
-                ratio = distances[j] / (distances + 1e-10)
-                memberships[idx, j] = 1.0 / np.sum(ratio ** (2 / (self.fuzziness - 1)))
+                memberships[idx, j] = (self.fci[j] / (distances[j] ** (1 / (m - 1)))) / (denom + 1e-100)
 
         return memberships
 

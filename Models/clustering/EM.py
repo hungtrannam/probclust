@@ -3,7 +3,7 @@ from utils.dist import Dist
 
 class EMClustering:
     def __init__(self, pdf_matrix, grid_x, num_clusters=3, max_iterations=100, tolerance=1e-5,
-                 distance_metric='L2', bandwidth=0.01):
+                 distance_metric='L2', bandwidth=0.01, seed = None):
         """
         EM clustering for probability density functions.
 
@@ -23,10 +23,13 @@ class EMClustering:
         self.tolerance = tolerance
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
-
+        self.seed = seed
         self.num_pdfs, self.num_points = pdf_matrix.shape
 
         # Initialize soft responsibility matrix (gamma): [num_pdfs, num_clusters]
+        if self.seed is not None:
+            np.random.seed(self.seed)
+
         self.responsibilities = np.random.dirichlet(np.ones(num_clusters), size=self.num_pdfs)
 
         # Initialize cluster prototypes (centroids): [num_clusters, num_points]

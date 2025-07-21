@@ -3,7 +3,7 @@ from utils.dist import Dist
 
 class Model:
     def __init__(self, grid_x, num_clusters=3, fuzziness=2, max_iterations=100,
-                 tolerance=1e-5, kernel_type='L2', gamma=1.0, bandwidth=0.01):
+                 tolerance=1e-5, kernel_type='L2', gamma=1.0, bandwidth=0.01, seed= None):
         """
         Kernel Fuzzy C-Means clustering for probability density functions.
 
@@ -26,6 +26,7 @@ class Model:
         self.kernel_type = kernel_type
         self.gamma = gamma
         self.bandwidth = bandwidth
+        self.seed= seed
 
     def _kernel_function(self, pdf1, pdf2):
         dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
@@ -49,6 +50,9 @@ class Model:
     def fit(self, pdf_matrix, verbose=True):
         self.pdf_matrix = pdf_matrix
         self.num_pdfs = self.pdf_matrix.shape[0]
+        if self.seed is not None:
+            np.random.seed(self.seed)
+
         self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)  # [num_pdfs, num_clusters]
 
         # Initialize cluster centroids (prototypes) as random pdfs
@@ -87,7 +91,10 @@ class Model:
             # Check convergence
             delta = np.linalg.norm(self.membership_matrix - previous_U)
             if verbose:
-                print(f"Iteration {iteration + 1}, delta = {delta:.6f}")
+
+                objective_value = np.sum((self.membership_matrix ** self.fuzziness) * (2 * (1 - kernel_to_centroids)))
+                print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {objective_value:.6f}")  
+
             if delta < self.tolerance:
                 print("Converged.")
                 break
