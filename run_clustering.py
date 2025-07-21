@@ -1,77 +1,70 @@
 import numpy as np
 import os
-from data.data_loader import generateGauss, generateUniform
-from utils.dist import Dist
-from utils.integral import int, grid
-from utils.vis import *
-from Models.clustering import FCF, EM, KCF, KFCF, HCF
+import argparse
+from data.data_loader import generateGauss
+from utils.integral import grid
+from utils.vis import plotPDF, plotHeatmap_U, plotPDF_Theta
+from Models.clustering import NCF
 
-# Tạo grid
-h = 0.01
-x, _ = grid(h, start=-10, end=25)
+def main(args):
+    # Tạo grid
+    h = args.bandwidth
+    x, _ = grid(h, start=-10, end=25)
 
-mu = np.array([0.3, 4.0, 9.1, 1.0, 5.5, 8.0, 4.8])
-sig = np.ones_like(mu)
-print("sigma:", sig)
+    mu = np.array([0.3, 4.0, 9.1, 1.0, 5.5, 8.0, 4.8, 4])
+    sig = np.array([1,1,1,1,1,1,1, 3])
+    print("sigma:", sig)
 
-# Sinh Gaussian
-F_data = generateGauss(mu, sig, x, savefile='dataset/data.npz')
+    # Sinh Gaussian
+    F_data = generateGauss(mu, sig, x, savefile='dataset/data.npz')
 
-# Vẽ các PDF ban đầu
-plotPDF(x, F_data, savefile='figs/pdfs.pdf')
+    # Vẽ các PDF ban đầu
+    plotPDF(x, F_data, savefile='figs/pdfs.pdf')
 
-# Tham số clustering
-c_clust = 3
-max_iter = 100
-eps = 1e-6
+    # Khởi tạo và huấn luyện
+    cluster = NCF.Model(
+        grid_x=x,
+        num_clusters=args.num_clusters,
+        max_iterations=args.max_iter,
+        distance_metric=args.distance_metric,
+        tolerance=args.tolerance,
+        delta=args.delta,
+        w1=args.w1,
+        w2=args.w2,
+        w3=args.w3,
+        bandwidth=h,
+        seed=args.seed
+    )
+    cluster.fit(F_data)
 
+    T, I, F, V = cluster.get_results()
 
-# Khởi tạo và huấn luyện
-cluster = HCF.Model(
-    grid_x = x,
-    # kernel_type='L2',
-    distance_metric='L2',
-    # num_clusters=c_clust,
-    linkage='centroid',  # 'single', 'complete', 'average', 'centroid', 'ward'
-    min_cluster_size=1,
-    max_depth=7,
-    # max_iterations=max_iter,
-    # tolerance=eps,
-    bandwidth=h)
+    # Vẽ heatmap T
+    plotHeatmap_U(T, savefile=os.path.join(args.save_dir, "T.pdf"))
 
-# cluster = KFCF.Model(
-#     grid_x=x,
-#     # max_depth=7,
-#     num_clusters=c_clust,
-#     max_iterations=max_iter,
-#     tolerance=eps,
-#     gamma=1.0,
-#     # fuzziness=2,
-#     # min_cluster_size=1,
-#     # linkage='ward',  # 'single', 'complete', 'average', 'centroid', 'wards
-#     # distance_metric='L1',  # hoặc 'L1', 'H', 'BC', 'W2'
-#     kernel_type='L2',  # 'L1', 'L2', 'H', 'BC', 'W2'
-#     bandwidth=h
-# )
-cluster.fit(F_data)
+    # Vẽ heatmap tổng hợp
+    compile = np.vstack([T, I[np.newaxis, :], F[np.newaxis, :]])
+    plotHeatmap_U(compile, savefile=os.path.join(args.save_dir, "compile.pdf"))
 
-cluster.print_tree()
-plot_tree(cluster.tree, cluster.dist_matrix,
-          savefile=f'figs/tree_{cluster.distance_metric}_{cluster.linkage}.pdf')
+    # Vẽ trung tâm cụm
+    plotPDF_Theta(x, F_data, theta=V, savefile=os.path.join(args.save_dir, 'V.pdf'))
 
-# U, Theta = cluster.get_results()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run NCF clustering on generated Gaussian PDFs.")
+    parser.add_argument('--num_clusters', type=int, default=3, help='Number of clusters.')
+    parser.add_argument('--max_iter', type=int, default=100, help='Maximum number of iterations.')
+    parser.add_argument('--tolerance', type=float, default=1e-5, help='Convergence tolerance.')
+    parser.add_argument('--distance_metric', type=str, default='L2', choices=['L1', 'L2', 'H', 'BC', 'W2'],
+                        help='Distance metric to use.')
+    parser.add_argument('--delta', type=float, default=1, help='Delta parameter for falsity.')
+    parser.add_argument('--w1', type=float, default=1, help='Weight w1 for truth membership.')
+    parser.add_argument('--w2', type=float, default=1, help='Weight w2 for indeterminacy.')
+    parser.add_argument('--w3', type=float, default=1, help='Weight w3 for falsity.')
+    parser.add_argument('--bandwidth', type=float, default=0.01, help='Bandwidth for integration.')
+    parser.add_argument('--save_dir', type=str, default='figs', help='Directory to save output figures.')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility.')
 
-# print("Cluster labels:", U)
+    args = parser.parse_args()
 
-# # Vẽ heatmap nhãn (hard labels)
-# plotHeatmap_U(U, savefile="figs/U.pdf")
-
-# # Vẽ trung tâm cụm
-# plotPDF_Theta(x, F_data, theta=Theta, savefile='figs/V.pdf')
-
-# # Dự đoán nhãn cho dữ liệu mới
-# f_new = generateGauss([4], sig, x)
-
-# U_new = cluster.predict(f_new)
-# print("Predicted labels for new data:", U_new)
-
+    os.makedirs(args.save_dir, exist_ok=True)
+    main(args)

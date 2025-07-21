@@ -105,7 +105,7 @@ def plotPDF_Theta(grid, pdfs, theta, savefile=None):
 
 # ==========================================
 
-def plotHeatmap_U(U, savefile=None):
+def plotHeatmap_U(membership_matrix, savefile=None):
     """
     Vẽ heatmap cho ma trận phân vùng fuzzy clustering.
     """
@@ -113,7 +113,7 @@ def plotHeatmap_U(U, savefile=None):
     temp(fontsize=20)
     
     sns.heatmap(
-        U,
+        membership_matrix,
         annot=True,
         fmt=".2f",
         cmap='Greys',   # Thang xám
