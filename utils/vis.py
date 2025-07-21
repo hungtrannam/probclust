@@ -238,7 +238,7 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
     draw_dendrogram(ax_dendro, 'root', positions, heights)
     for leaf, x in leaf_x.items():
         ax_dendro.plot(x, 0, 'o', color='black', markersize=4)
-        ax_dendro.text(x, -0.3, str(leaf), ha='center', va='top', fontsize=12)
+        ax_dendro.text(x, -0.3, str(leaf+1), ha='center', va='top', fontsize=12)
     ax_dendro.set_ylim(-0.5, max(heights.values()) + 0.5)
     ax_dendro.set_xlim(-0.5, len(leaf_x) - 0.5)
 
@@ -266,7 +266,9 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
     ax_heat.set_xticks([])
     ax_heat.set_xticklabels([])
     ax_heat.set_yticks(np.arange(n))
-    ax_heat.set_yticklabels(unique_leaf_order[::-1], fontsize=12)  # reverse labels
+    ax_heat.set_yticklabels((np.array(unique_leaf_order[::-1]) + 1).tolist(), fontsize=12)
+
+
 
     # Annotate
     if verbose:

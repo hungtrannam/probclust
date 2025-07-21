@@ -36,6 +36,8 @@ class Model:
         elif self.kernel_type == 'L2':
             l2 = dist_obj.L2()
             return np.exp(-self.gamma * l2 ** 2)
+        elif self.kernel_type == 'BC':
+            return np.exp(-dist_obj.BC())
         else:
             raise ValueError(f"Unsupported kernel type: {self.kernel_type}")
 
@@ -74,7 +76,11 @@ class Model:
                     kernel_to_centroids[i, j] = self._kernel_function(self.pdf_matrix[i], self.centroids[j])
 
             # Step 2: Update membership matrix U
-            distances = np.sqrt(2 * (1 - kernel_to_centroids))
+            if self.kernel_type == 'BC':
+                distances = 1-kernel_to_centroids
+            else:
+                distances = np.sqrt(2 * (1 - kernel_to_centroids))
+            
             for k in range(self.num_pdfs):
                 denom = np.sum((distances[k, :] + eps_small) ** (-1 / (self.fuzziness - 1)))
                 for j in range(self.num_clusters):
@@ -91,8 +97,12 @@ class Model:
             # Check convergence
             delta = np.linalg.norm(self.membership_matrix - previous_U)
             if verbose:
+                if self.kernel_type == 'BC':
+                    distances = 1-kernel_to_centroids
+                else:
+                    distances = np.sqrt(2 * (1 - kernel_to_centroids))
 
-                objective_value = np.sum((self.membership_matrix ** self.fuzziness) * (2 * (1 - kernel_to_centroids)))
+                objective_value = np.sum((self.membership_matrix ** self.fuzziness) * distances)
                 print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {objective_value:.6f}")  
 
             if delta < self.tolerance:
@@ -126,7 +136,10 @@ class Model:
                 kernel_to_centroids[j] = np.sum(weights * kernel_to_pdfs) / (np.sum(weights) + eps_small)
 
             # Compute distance and fuzzy membership
-            distances = np.sqrt(2 * (1 - kernel_to_centroids))
+            if self.kernel_type == 'BC':
+                distances = kernel_to_centroids
+            else:
+                distances = np.sqrt(2 * (1 - kernel_to_centroids))
             denom = np.sum(distances ** (-1 / (self.fuzziness - 1)))
             memberships[i, :] = (distances ** (-1 / (self.fuzziness - 1))) / denom
 
