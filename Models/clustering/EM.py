@@ -8,7 +8,7 @@ class EMClustering:
         EM clustering for probability density functions.
 
         Parameters:
-        - pdf_matrix: np.ndarray, shape [num_points, num_pdfs]
+        - pdf_matrix: np.ndarray, shape [num_pdfs, num_points]
         - grid_x: np.ndarray, grid points for distance calculations
         - num_clusters: int, number of clusters
         - max_iterations: int, maximum number of EM iterations
@@ -16,7 +16,7 @@ class EMClustering:
         - distance_metric: str, type of distance ('L1', 'L2', 'H', 'BC', 'W2')
         - bandwidth: float, integration bandwidth parameter
         """
-        self.pdf_matrix = pdf_matrix  # [num_points, num_pdfs]
+        self.pdf_matrix = pdf_matrix  # [num_pdfs, num_points]
         self.grid_x = grid_x
         self.num_clusters = num_clusters
         self.max_iterations = max_iterations
@@ -24,16 +24,16 @@ class EMClustering:
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
 
-        self.num_points, self.num_pdfs = pdf_matrix.shape
+        self.num_pdfs, self.num_points = pdf_matrix.shape
 
         # Initialize soft responsibility matrix (gamma): [num_pdfs, num_clusters]
         self.responsibilities = np.random.dirichlet(np.ones(num_clusters), size=self.num_pdfs)
 
-        # Initialize cluster prototypes (centroids): [num_points, num_clusters]
-        self.centroids = np.zeros((self.num_points, self.num_clusters))
+        # Initialize cluster prototypes (centroids): [num_clusters, num_points]
+        self.centroids = np.zeros((self.num_clusters, self.num_points))
         init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
         for j, idx in enumerate(init_indices):
-            self.centroids[:, j] = self.pdf_matrix[:, idx]
+            self.centroids[j, :] = self.pdf_matrix[idx, :]
 
         # Initialize cluster priors (weights)
         self.cluster_priors = np.ones(self.num_clusters) / self.num_clusters
@@ -53,27 +53,23 @@ class EMClustering:
         for iteration in range(self.max_iterations):
             # M-step: update centroids (prototypes)
             for j in range(self.num_clusters):
-                weights = self.responsibilities[:, j]
-                numerator = np.sum(weights * self.pdf_matrix, axis=1)
+                weights = self.responsibilities[:, j]  # [num_pdfs]
+                numerator = np.sum(weights[:, np.newaxis] * self.pdf_matrix, axis=0)  # [num_points]
                 denominator = np.sum(weights)
-                self.centroids[:, j] = numerator / (denominator + 1e-10)
+                self.centroids[j, :] = numerator / (denominator + 1e-10)
 
             # M-step: update cluster priors (weights)
             self.cluster_priors = np.sum(self.responsibilities, axis=0) / self.num_pdfs
 
             # E-step: compute distances
             distance_matrix = np.array([
-                [self._compute_distance(self.pdf_matrix[:, i], self.centroids[:, j]) + 1e-10
+                [self._compute_distance(self.pdf_matrix[i, :], self.centroids[j, :]) + 1e-10
                  for j in range(self.num_clusters)]
                 for i in range(self.num_pdfs)
-            ])
+            ])  # [num_pdfs, num_clusters]
 
             # E-step: update responsibilities (soft assignments)
-            new_responsibilities = np.array([
-                [self.cluster_priors[j] * np.exp(-distance_matrix[i, j])
-                 for j in range(self.num_clusters)]
-                for i in range(self.num_pdfs)
-            ])
+            new_responsibilities = np.exp(-distance_matrix) * self.cluster_priors[np.newaxis, :]  # [num_pdfs, num_clusters]
             new_responsibilities /= np.sum(new_responsibilities, axis=1, keepdims=True)
 
             # Check convergence
@@ -91,19 +87,19 @@ class EMClustering:
         Predict soft cluster assignments for new pdfs.
 
         Parameters:
-        - new_pdfs: np.ndarray, shape [num_points,] or [num_points, num_new_pdfs]
+        - new_pdfs: np.ndarray, shape [num_new_pdfs, num_points]
 
         Returns:
         - soft_assignments: np.ndarray, shape [num_new_pdfs, num_clusters]
         """
         if new_pdfs.ndim == 1:
-            new_pdfs = new_pdfs[:, np.newaxis]
-        num_new = new_pdfs.shape[1]
+            new_pdfs = new_pdfs[np.newaxis, :]  # [1, num_points]
+        num_new = new_pdfs.shape[0]
         soft_assignments = np.zeros((num_new, self.num_clusters))
 
         for idx in range(num_new):
             distances = np.array([
-                self._compute_distance(new_pdfs[:, idx], self.centroids[:, j]) + 1e-10
+                self._compute_distance(new_pdfs[idx, :], self.centroids[j, :]) + 1e-10
                 for j in range(self.num_clusters)
             ])
             probabilities = self.cluster_priors * np.exp(-distances)
@@ -116,7 +112,7 @@ class EMClustering:
         """
         Returns:
         - responsibilities.T: np.ndarray, shape [num_clusters, num_pdfs]
-        - centroids: np.ndarray, shape [num_points, num_clusters]
+        - centroids: np.ndarray, shape [num_clusters, num_points]
         - cluster_priors: np.ndarray, shape [num_clusters,]
         """
         return self.responsibilities.copy().T, self.centroids.copy(), self.cluster_priors.copy()

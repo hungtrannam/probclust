@@ -100,7 +100,8 @@ def plotPDF_Theta(grid, pdfs, theta, savefile=None):
 
     if savefile:
         os.makedirs('figs', exist_ok=True)
-        plt.savefig(savefile, bbox_inches='tight')
+        plt.savefig(savefile, bbox_inches='tight', dpi=300)
+    plt.close()
 
 # ==========================================
 
@@ -127,7 +128,8 @@ def plotHeatmap_U(U, savefile=None):
     
     if savefile:
         os.makedirs('figs', exist_ok=True)
-        plt.savefig(savefile, bbox_inches='tight')
+        plt.savefig(savefile, bbox_inches='tight', dpi=300)
+    plt.close()
 
 # ==========================================
 
@@ -206,10 +208,10 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
             if child in tree:
                 x1, y1 = positions[child], heights[child]
                 child_xs.append(x1)
-                ax.plot([x1, x1], [y1, y0], color='black', linewidth=1)
+                ax.plot([x1, x1], [y1, y0], color='black', linewidth=1.5)
                 draw_dendrogram(ax, child, positions, heights)
         if child_xs:
-            ax.plot([min(child_xs), max(child_xs)], [y0, y0], color='black', linewidth=1)
+            ax.plot([min(child_xs), max(child_xs)], [y0, y0], color='black', linewidth=1.5)
 
     # Lấy thứ tự lá
     leaf_order = get_leaf_order()
@@ -228,15 +230,15 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
     dist_reordered = dist_matrix[np.ix_(reorder_idx, reorder_idx)]
 
     # Vẽ figure chia 2 phần: trên (dendrogram) và dưới (heatmap)
-    fig = plt.figure(figsize=(5, 5))
-    gs = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.05)
+    fig = plt.figure(figsize=(4, 4))
+    gs = fig.add_gridspec(2, 1, height_ratios=[1, 2], hspace=0.08)
 
     # === Dendrogram ===
     ax_dendro = fig.add_subplot(gs[0])
     draw_dendrogram(ax_dendro, 'root', positions, heights)
     for leaf, x in leaf_x.items():
-        ax_dendro.plot(x, 0, 'o', color='black', markersize=2)
-        ax_dendro.text(x, -0.3, str(leaf), ha='center', va='top', fontsize=8)
+        ax_dendro.plot(x, 0, 'o', color='black', markersize=4)
+        ax_dendro.text(x, -0.3, str(leaf), ha='center', va='top', fontsize=12)
     ax_dendro.set_ylim(-0.5, max(heights.values()) + 0.5)
     ax_dendro.set_xlim(-0.5, len(leaf_x) - 0.5)
 
@@ -255,7 +257,7 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
     # Plot
     pcm = ax_heat.pcolormesh(
         X, Y, dist_flipped,
-        cmap='Greys_r',
+        cmap='gray', #'bone'Greys_rGreys_r
         shading='flat',
         edgecolors='none'
     )
@@ -264,21 +266,20 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
     ax_heat.set_xticks([])
     ax_heat.set_xticklabels([])
     ax_heat.set_yticks(np.arange(n))
-    ax_heat.set_yticklabels(unique_leaf_order[::-1], fontsize=8)  # reverse labels
+    ax_heat.set_yticklabels(unique_leaf_order[::-1], fontsize=12)  # reverse labels
 
     # Annotate
     if verbose:
         for i in range(n):
             for j in range(n):
-                if i <= j:
-                    value = dist_reordered[n - 1 - i, j]
-                    ax_heat.text(j, i, f"{value:.2f}", ha='center', va='center', fontsize=6, color='white')
+                value = dist_reordered[n - 1 - i, j]
+                ax_heat.text(j, i, f"{value:.2f}", ha='center', va='center', fontsize=6, color='white')
 
     # Colorbar
-    fig.colorbar(pcm, ax=ax_heat, orientation='horizontal', fraction=0.08, pad=0.05).ax.tick_params(labelsize=8)
+    fig.colorbar(pcm, ax=ax_heat, orientation='horizontal', fraction=0.08, pad=0.05).ax.tick_params(labelsize=9)
 
     # Lưu file
     if savefile:
         os.makedirs('figs', exist_ok=True)
-        plt.savefig(savefile, bbox_inches='tight', dpi=600)
+        plt.savefig(savefile, bbox_inches='tight', dpi=300)
     plt.close(fig)
