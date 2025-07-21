@@ -2,7 +2,7 @@ import numpy as np
 from utils.dist import Dist
 
 class Model:
-    def __init__(self, grid_x, max_depth=3, linkage='average', min_cluster_size=1,
+    def __init__(self, grid_x, max_depth=7, linkage='average', min_cluster_size=1,
                  distance_metric='L2', bandwidth=0.01):
         self.grid_x = grid_x
         self.max_depth = max_depth
