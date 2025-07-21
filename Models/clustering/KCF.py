@@ -2,13 +2,13 @@ import numpy as np
 from utils.dist import Dist
 
 class Model:
-    def __init__(self, pdf_matrix, grid_x, num_clusters=3, max_iterations=100, tolerance=1e-5,
+    def __init__(self, grid_x, num_clusters=3, max_iterations=100, tolerance=1e-5,
                  distance_metric='L2', bandwidth=0.01):
         """
         Classic K-Means Clustering for probability density functions.
 
         Parameters:
-        - pdf_matrix: np.ndarray of shape [num_points, num_pdfs]
+        - pdf_matrix: np.ndarray of shape [num_pdfs, num_points]
         - grid_x: grid points for integration / distance
         - num_clusters: number of clusters
         - max_iterations: maximum number of iterations
@@ -16,21 +16,12 @@ class Model:
         - distance_metric: distance type ('L1', 'L2', 'H', 'BC', 'W2')
         - bandwidth: bandwidth parameter for distance calculation
         """
-        self.pdf_matrix = pdf_matrix  # [num_points, num_pdfs]
         self.grid_x = grid_x
         self.num_clusters = num_clusters
         self.max_iterations = max_iterations
         self.tolerance = tolerance
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
-
-        self.num_points, self.num_pdfs = pdf_matrix.shape
-
-        # Initialize random cluster assignments
-        self.cluster_assignments = np.random.randint(0, num_clusters, self.num_pdfs)
-
-        # Initialize cluster centroids (prototypes)
-        self.centroids = np.zeros((self.num_points, num_clusters))  # [num_points, num_clusters]
 
     def _compute_distance(self, pdf1, pdf2):
         distance_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
@@ -43,7 +34,16 @@ class Model:
         }
         return distance_map.get(self.distance_metric, None)
 
-    def fit(self, verbose=True):
+    def fit(self,pdf_matrix, verbose=True):
+        self.pdf_matrix = pdf_matrix  # [num_pdfs, num_points]
+        self.num_pdfs, self.num_points = pdf_matrix.shape
+
+        # Initialize random cluster assignments
+        self.cluster_assignments = np.random.randint(0, self.num_clusters, self.num_pdfs)
+
+        # Initialize cluster centroids (prototypes)
+        self.centroids = np.zeros((self.num_clusters, self.num_points))  # [num_clusters, num_points]
+
         for iteration in range(self.max_iterations):
             prev_assignments = self.cluster_assignments.copy()
 
@@ -51,18 +51,19 @@ class Model:
             for cluster_idx in range(self.num_clusters):
                 member_indices = np.where(self.cluster_assignments == cluster_idx)[0]
                 if len(member_indices) > 0:
-                    self.centroids[:, cluster_idx] = np.mean(self.pdf_matrix[:, member_indices], axis=1)
+                    self.centroids[cluster_idx, :] = np.mean(self.pdf_matrix[member_indices, :], axis=0)
                 else:
                     # Reinitialize empty cluster centroid randomly
                     random_idx = np.random.randint(0, self.num_pdfs)
-                    self.centroids[:, cluster_idx] = self.pdf_matrix[:, random_idx]
+                    self.centroids[cluster_idx, :] = self.pdf_matrix[random_idx, :]
 
             # Update cluster assignments (hard assignment)
             distance_matrix = np.array([
-                [self._compute_distance(self.pdf_matrix[:, pdf_idx], self.centroids[:, cluster_idx]) + 1e-10
+                [self._compute_distance(self.pdf_matrix[pdf_idx, :], self.centroids[cluster_idx, :]) + 1e-100
                  for cluster_idx in range(self.num_clusters)]
                 for pdf_idx in range(self.num_pdfs)
-            ])
+            ])  # [num_pdfs, num_clusters]
+
             self.cluster_assignments = np.argmin(distance_matrix, axis=1)
 
             # Check for convergence
@@ -83,19 +84,19 @@ class Model:
         Predict hard cluster assignment for new pdfs.
 
         Parameters:
-        - new_pdfs: np.ndarray of shape [num_points,] or [num_points, num_new_pdfs]
+        - new_pdfs: np.ndarray of shape [num_new_pdfs, num_points]
 
         Returns:
         - cluster_indices: np.ndarray of shape [num_new_pdfs,]
         """
         if new_pdfs.ndim == 1:
-            new_pdfs = new_pdfs[:, np.newaxis]
-        num_new = new_pdfs.shape[1]
+            new_pdfs = new_pdfs[np.newaxis, :]  # [1, num_points]
+        num_new = new_pdfs.shape[0]
         predicted_clusters = np.zeros(num_new, dtype=int)
 
         for idx in range(num_new):
             distances = np.array([
-                self._compute_distance(new_pdfs[:, idx], self.centroids[:, cluster_idx]) + 1e-10
+                self._compute_distance(new_pdfs[idx, :], self.centroids[cluster_idx, :]) + 1e-10
                 for cluster_idx in range(self.num_clusters)
             ])
             predicted_clusters[idx] = np.argmin(distances)
@@ -105,8 +106,8 @@ class Model:
     def get_results(self):
         """
         Returns:
-        - partition_matrix: np.ndarray [num_clusters, num_pdfs] (one-hot)
-        - centroids: np.ndarray [num_points, num_clusters]
+        - partition_matrix: np.ndarray [num_clusters, num_pdfs] (one-hot transposed)
+        - centroids: np.ndarray [num_clusters, num_points]
         """
         return self.partition_matrix.T.copy(), self.centroids.copy()
 

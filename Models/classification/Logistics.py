@@ -49,11 +49,12 @@ class Model:
     def intercept_(self):
         return self.beta[0]
 
+from utils.integral import int
 def compute_moments(pdfs, basis_functions, x_grid):
     moments = np.zeros((pdfs.shape[0], len(basis_functions)))
     for i, pdf in enumerate(pdfs):
         for j, psi in enumerate(basis_functions):
-            moments[i, j] = np.trapezoid(pdf * psi, x_grid)
+            moments[i, j] = int(pdf * psi, x_grid, Dim=1)
     return moments
 
 

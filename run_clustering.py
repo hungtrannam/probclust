@@ -27,27 +27,37 @@ eps = 1e-6
 
 
 # Khởi tạo và huấn luyện
-# clusterer = HCF.Model(
-#     grid_x = x,
-#     kernel_type='L2',
-#     # distance_metric='L2',
+cluster = HCF.Model(
+    grid_x = x,
+    # kernel_type='L2',
+    distance_metric='L2',
+    # num_clusters=c_clust,
+    linkage='centroid',  # 'single', 'complete', 'average', 'centroid', 'ward'
+    min_cluster_size=1,
+    max_depth=7,
+    # max_iterations=max_iter,
+    # tolerance=eps,
+    bandwidth=h)
+
+# cluster = KFCF.Model(
+#     grid_x=x,
+#     # max_depth=7,
 #     num_clusters=c_clust,
 #     max_iterations=max_iter,
 #     tolerance=eps,
+#     gamma=1.0,
+#     # fuzziness=2,
+#     # min_cluster_size=1,
+#     # linkage='ward',  # 'single', 'complete', 'average', 'centroid', 'wards
+#     # distance_metric='L1',  # hoặc 'L1', 'H', 'BC', 'W2'
+#     kernel_type='L2',  # 'L1', 'L2', 'H', 'BC', 'W2'
 #     bandwidth=h
 # )
-cluster = HCF.Model(
-    grid_x=x,
-    max_depth=7,
-    min_cluster_size=1,
-    linkage='ward',  # 'single', 'complete', 'average', 'centroid', 'wards
-    distance_metric='L2',  # hoặc 'L1', 'H', 'BC', 'W2'
-    bandwidth=h
-)
 cluster.fit(F_data)
-cluster.print_tree()
 
-plot_tree(cluster.tree, cluster.dist_matrix, savefile=f'figs/tree_{cluster.distance_metric}_{cluster.linkage}.pdf')
+cluster.print_tree()
+plot_tree(cluster.tree, cluster.dist_matrix,
+          savefile=f'figs/tree_{cluster.distance_metric}_{cluster.linkage}.pdf')
 
 # U, Theta = cluster.get_results()
 

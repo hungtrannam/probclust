@@ -42,12 +42,12 @@ class Model:
         K = np.zeros((self.num_pdfs, self.num_pdfs))
         for i in range(self.num_pdfs):
             for j in range(i, self.num_pdfs):
-                val = self._kernel_function(self.pdf_matrix[i], self.pdf_matrix[j])
-                K[i, j] = K[j, i] = val
+                K_val = self._kernel_function(self.pdf_matrix[i], self.pdf_matrix[j])
+                K[i, j] = K[j, i] = K_val
         return K
 
     def fit(self, pdf_matrix, verbose=True):
-        self.pdf_matrix = pdf_matrix.T
+        self.pdf_matrix = pdf_matrix
         self.num_pdfs = self.pdf_matrix.shape[0]
         self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)  # [num_pdfs, num_clusters]
 
@@ -131,4 +131,4 @@ class Model:
         - membership_matrix.T: np.ndarray, shape [num_clusters, num_pdfs]
         - centroids.T: np.ndarray, shape [num_points, num_clusters]
         """
-        return self.membership_matrix.copy().T, self.centroids.T
+        return self.membership_matrix.copy().T, self.centroids
