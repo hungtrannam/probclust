@@ -1,38 +1,59 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.integrate import trapezoid
+
+from scipy.optimize import minimize
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import trapezoid
+from scipy.optimize import minimize
 
 class Model:
-    def __init__(self, lr=0.1, n_iter=1000, l1_penalty=0.01, verbose=True):
-        self.lr = lr
-        self.n_iter = n_iter
+    def __init__(self, l1_penalty=0.0, n_iter=1000, verbose=True):
         self.l1_penalty = l1_penalty
+        self.n_iter = n_iter
         self.verbose = verbose
         self.beta = None
 
     def sigmoid(self, z):
         return 1 / (1 + np.exp(-z))
 
-    def compute_log_likelihood(self, X, y):
-        z = X @ self.beta
-        loglik = np.sum(y * z - np.log(1 + np.exp(z)))
-        loglik -= self.l1_penalty * np.sum(np.abs(self.beta[1:]))
-        return loglik
+    def negative_log_likelihood(self, beta, X, y):
+        z = X @ beta
+        ll = np.sum(y * z - np.log(1 + np.exp(z)))
+        penalty = self.l1_penalty * np.sum(np.abs(beta[1:]))
+        loss = -ll + penalty  # dấu âm vì minimize
+        if self.verbose:
+            print(f"[Objective] Loss: {loss:.6f}")
+        return loss
 
-    def compute_gradient(self, X, y):
-        z = X @ self.beta
+    def gradient(self, beta, X, y):
+        z = X @ beta
         p = self.sigmoid(z)
         grad = X.T @ (y - p)
-        grad[1:] -= self.l1_penalty * np.sign(self.beta[1:])
+        grad[1:] -= self.l1_penalty * np.sign(beta[1:])
+        grad = -grad  # dấu âm vì minimize
+        if self.verbose:
+            print(f"[Gradient] Norm: {np.linalg.norm(grad):.6f}")
         return grad
 
     def fit(self, X, y):
-        self.beta = np.zeros(X.shape[1])
-        for i in range(self.n_iter):
-            grad = self.compute_gradient(X, y)
-            self.beta += self.lr * grad
-            if self.verbose and i % 100 == 0:
-                ll = self.compute_log_likelihood(X, y)
-                print(f"Iteration {i}, penalized log-likelihood: {ll:.4f}")
+        n_features = X.shape[1]
+        beta_init = np.zeros(n_features)
+        res = minimize(
+            fun=self.negative_log_likelihood,
+            x0=beta_init,
+            args=(X, y),
+            jac=self.gradient,
+            method='L-BFGS-B',
+            options={'maxiter': self.n_iter, 'disp': self.verbose}
+        )
+        self.beta = res.x
+        if self.verbose:
+            print(f"Optimization finished. Final loss: {res.fun:.6f}")
+            print(f"Intercept: {self.intercept_:.4f}")
+            print(f"Coefficients: {self.coef_}")
         return self
 
     def predict_proba(self, X):
@@ -49,12 +70,13 @@ class Model:
     def intercept_(self):
         return self.beta[0]
 
-from utils.integral import int
+
 def compute_moments(pdfs, basis_functions, x_grid):
     moments = np.zeros((pdfs.shape[0], len(basis_functions)))
     for i, pdf in enumerate(pdfs):
         for j, psi in enumerate(basis_functions):
-            moments[i, j] = int(pdf * psi, x_grid, Dim=1)
+            val = trapezoid(pdf * psi, x=x_grid)
+            moments[i, j] = val
     return moments
 
 

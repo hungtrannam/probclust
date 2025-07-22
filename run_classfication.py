@@ -1,122 +1,106 @@
 import numpy as np
-
-from Models.classification.Logistics import compute_moments
-from Models.classification import Logistics
+import matplotlib.pyplot as plt
+import os
 
 from utils.integral import grid
 from data.data_loader import generateGauss
-from scipy.stats import norm
-from utils.vis import plot_beta_function
-from scipy.stats import norm as normal_dist
+from Models.classification import Logistics, SVM
+from utils.kernel import kernel
+from utils.vis import *
+
+def generate_gaussian_basis(x_grid, M, sigma=None):
+    centers = np.linspace(x_grid.min(), x_grid.max(), M)
+    sigma = sigma or (x_grid.max() - x_grid.min()) / (2 * M)
+    return [np.exp(-0.5 * ((x_grid - c) / sigma) ** 2) for c in centers]
+
+def prepare_logistic_features(pdfs, basis_functions, x_grid):
+    moments = np.array([
+        [np.trapezoid(f * psi, x_grid) for psi in basis_functions]
+        for f in pdfs
+    ])
+    X_design = np.hstack([np.ones((moments.shape[0], 1)), moments])
+    return X_design
+
+def predict_new_sample_logistic(new_pdf, log_model, basis_functions, x_grid):
+    moment = np.array([np.trapezoid(new_pdf * psi, x_grid) for psi in basis_functions])
+    X_new = np.hstack([1.0, moment])
+    prob = log_model.predict_proba(X_new.reshape(1, -1))[0]
+    pred = log_model.predict(X_new.reshape(1, -1))[0]
+    return pred, prob
+
+def predict_new_sample_svm(new_pdf, all_pdfs, svm_model, kc):
+    K_full = kc.L1(np.vstack([all_pdfs, new_pdf[None, :]]))
+    K_new = K_full[-1, :-1].reshape(1, -1)
+    prob = svm_model.predict_proba(K_new)[0] # probability for class 1
+    pred = svm_model.predict(K_new)[0]
+    return pred, prob
+
+def run_and_plot(x_grid, class1_data, class2_data, all_pdfs, y, new_pdf):
+    n_A, n_B = len(class1_data), len(class2_data)
+
+    # Logistic Regression
+    print("\n=== Logistic Regression ===")
+    M = 20
+    basis_functions = generate_gaussian_basis(x_grid, M)
+    X_design = prepare_logistic_features(all_pdfs, basis_functions, x_grid)
+    log_model = Logistics.Model(n_iter=1000, l1_penalty=0.1, verbose=False)
+    log_model.fit(X_design, y)
+    decision_values = log_model.predict_proba(X_design)
+    preds = log_model.predict(X_design)
+    print(preds)
+    acc = np.mean(preds == y)
+    print(f"[LOGISTIC] Accuracy: {acc*100:.2f}%")
+
+    plot_log_function(x_grid, sum(log_model.coef_[j] * basis_functions[j] for j in range(M)), "figs/beta_log.pdf")
+    plot_decision(x_grid, all_pdfs, decision_values, n_A, n_B, 'figs/prob_log.pdf')
+
+    pred_log, prob_log = predict_new_sample_logistic(new_pdf, log_model, basis_functions, x_grid)
+    print(f"[LOGISTIC] New sample → Class: {pred_log}, Probability (class 1): {prob_log:.4f}")
+
+    # === SVM ===
+    print("\n=== SVM ===")
+    kc = kernel(h=0.01, Dim=1)
+    K_train = kc.L1(all_pdfs)  # (n_train, n_train)
+
+    svm_model = SVM.Model(C=1) 
+    svm_model.fit(K_train, y)
+
+    # Predict trên training set
+    preds_svm = svm_model.predict(K_train)
+    acc_svm = np.mean(preds_svm == y)
+    print(f"[SVM] Accuracy: {acc_svm * 100:.2f}%")
+
+    # Lấy probability (class 1) trên training set
+    probas_svm = svm_model.predict(K_train)
+    print(probas_svm)
+    plot_decision(x_grid, all_pdfs, probas_svm, n_A, n_B, 'figs/prob_svm.pdf')
+
+    # Predict sample mới
+    # Tạo kernel giữa (train, new_sample) → (n_train,)
+    K_full = kc.L1(np.vstack([all_pdfs, new_pdf[None, :]]))  # (n_train+1, n_train+1)
+    K_new = K_full[:-1, -1][:, None]  # (n_train, 1)
+
+    # Predict class và probability
+    pred_svm = svm_model.predict(K_new)[0]
+    print(f"[SVM] New sample → Class: {pred_svm}")
 
 
-# Tạo grid
-h = 0.01
-x_grid, _ = grid(h, start=-15, end=25)
+if __name__ == "__main__":
+    os.makedirs('figs', exist_ok=True)
+    h = 0.01
+    x_grid, _ = grid(h, start=-2, end=12)
 
-mu_A = [4, 4.2, 4.5, 4.4]
-mu_B = [1, 2, 3, 7]
+    mu_A = [1, 1.5, 2, 2.5, 6]
+    sig_A = [0.4] * 5
+    mu_B = [4.5, 7.5, 8.5, 8, 8.5]
+    sig_B = [0.9] * 5
 
-sig_A = [1, 1, 1, 1]
-sig_B = [2, 2, 2, 2]
+    class1_data = generateGauss(mu_A, sig_A, x_grid)
+    class2_data = generateGauss(mu_B, sig_B, x_grid)
+    all_pdfs = np.vstack([class1_data, class2_data])
+    y = np.array([0]*len(class1_data) + [1]*len(class2_data))
 
+    # New sample
+    new_pdf = generateGauss([3], [0.9], x_grid).ravel()
 
-# Sinh Gaussian
-class1_data = generateGauss(mu_A, sig_A, x_grid, savefile='dataset/data1.npz')
-class2_data = generateGauss(mu_B, sig_B, x_grid, savefile='dataset/data2.npz')
-
-# Chọn hàm cơ sở Gauss
-M = 3
-basis_centers = np.linspace(0, 10, M)
-basis_width = 1.0
-basis_functions = [norm(c, basis_width).pdf(x_grid) for c in basis_centers]
-
-# Tính moments
-X_A = compute_moments(class1_data, basis_functions, x_grid)
-X_B = compute_moments(class2_data, basis_functions, x_grid)
-X = np.vstack([X_A, X_B])
-y = np.array([0]*X_A.shape[0] + [1]*X_B.shape[0])
-
-# Thêm cột bias
-X_design = np.hstack([np.ones((X.shape[0],1)), X])
-
-# ======= HUẤN LUYỆN CHÍNH =======
-
-model = Logistics.Model(lr=0.1, n_iter=1000, l1_penalty=0.001, verbose=False)
-model.fit(X_design, y)
-
-# ======= TÍNH CHÍNH XÁC =======
-y_pred = model.predict(X_design)
-accuracy = np.mean(y_pred == y)
-print(f"Accuracy: {accuracy * 100:.2f}%")
-
-# ======= BOOTSTRAP KIỂM ĐỊNH =======
-
-# B = 1000  # số lần bootstrap
-# n_samples = len(y)
-# beta_hat = model.beta  # vector [intercept, coef_1, coef_2, ...]
-
-# beta_bootstrap = np.zeros((B, len(beta_hat)))
-
-# for b in range(B):
-#     idx = np.random.choice(n_samples, size=n_samples, replace=True)
-#     X_b = X_design[idx]
-#     y_b = y[idx]
-#     model_b = Logistics.Model(lr=0.1, n_iter=1000, l1_penalty=0.001, verbose=False)
-#     model_b.fit(X_b, y_b)
-#     beta_bootstrap[b] = model_b.beta
-
-# # Tính độ lệch chuẩn (SE) cho từng hệ số
-# se_beta = np.std(beta_bootstrap, axis=0)
-
-# # Tính z-score và p-value
-# z_scores = beta_hat / (se_beta + 1e-10)  # thêm nhỏ tránh chia 0
-# p_values = 2 * (1 - normal_dist.cdf(np.abs(z_scores)))
-
-# # In kết quả
-# print("\nBootstrap significance test:")
-# print("Coef        Estimate       SE         z        p-value")
-# for i, (b, se, z, p) in enumerate(zip(beta_hat, se_beta, z_scores, p_values)):
-#     name = f'beta_{i}' if i > 0 else 'intercept'
-#     print(f"{name:10} {b:12.4f} {se:10.4f} {z:10.4f} {p:10.4f}")
-
-# ======= VẼ BETA FUNCTION =======
-
-beta_func_hat = sum(model.coef_[j] * basis_functions[j] for j in range(M))
-plot_beta_function(x_grid, beta_func_hat, savefile="figs/beta.pdf")
-
-
-
-import matplotlib.pyplot as plt
-import matplotlib
-
-# ======= TÍNH TOÀN BỘ PDF VÀ XÁC SUẤT =======
-all_pdfs = np.vstack([class1_data, class2_data])  # [n_samples, n_x]
-all_probs = model.predict_proba(X_design)         # [n_samples]
-n_A = class1_data.shape[0]
-n_B = class2_data.shape[0]
-
-# ======= TẠO PLOT =======
-fig, ax = plt.subplots(figsize=(5, 4))
-cmap = plt.cm.coolwarm
-norm = matplotlib.colors.Normalize(vmin=0, vmax=1)
-
-# Vẽ lớp A
-for i in range(n_A):
-    color = cmap(norm(all_probs[i]))
-    ax.plot(x_grid, all_pdfs[i], color=color, alpha=1, linewidth=2)
-
-# Vẽ lớp B
-for i in range(n_A, n_A + n_B):
-    color = cmap(norm(all_probs[i]))
-    ax.plot(x_grid, all_pdfs[i], color=color, alpha=1, linewidth=2, linestyle='--')
-
-# Thêm colorbar
-sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-sm.set_array([])
-cbar = plt.colorbar(sm, ax=ax)
-cbar.set_label('Predicted Probability', labelpad=12)
-
-# Setup plot detail
-plt.tight_layout()
-plt.savefig('figs/pdfs_with_probs.pdf', bbox_inches='tight')
+    run_and_plot(x_grid, class1_data, class2_data, all_pdfs, y, new_pdf)

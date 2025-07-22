@@ -9,7 +9,7 @@ from Models.clustering import KCF, KFCF, HCF, FCF, EM
 def main(args):
     # Tạo grid
     h = args.bandwidth
-    x, _ = grid(h, start=-10, end=25)
+    x, _ = grid(h, start=-10, end=5)
 
     mu = np.array([0.3, 4.0, 9.1, 1.0, 5.5, 8.0, 4.8])
     sig = np.array([1,1,1,1,1,1,1])
