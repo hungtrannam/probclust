@@ -16,7 +16,7 @@ def grid(h, start=-20, end=20):
     """
     return np.arange(start, end + h, h), h
 
-def int(fv, h, Dim):
+def int_trapz(fv, h, Dim):
     """
     Tích phân xấp xỉ dùng hình thang (trapezoidal rule).
     """

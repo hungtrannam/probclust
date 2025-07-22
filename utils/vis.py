@@ -8,6 +8,7 @@
 # =======================================
 
 import matplotlib.pyplot as plt
+import matplotlib
 import numpy as np
 import seaborn as sns
 import os
@@ -75,6 +76,8 @@ def plotPDF(grid, pdfs, savefile=None):
     if savefile:
         os.makedirs('figs', exist_ok=True)
         plt.savefig(savefile, bbox_inches='tight')
+        print(f"Saved plot to {savefile}")
+    plt.close()
 
 # =============================
 
@@ -101,6 +104,8 @@ def plotPDF_Theta(grid, pdfs, theta, savefile=None):
     if savefile:
         os.makedirs('figs', exist_ok=True)
         plt.savefig(savefile, bbox_inches='tight', dpi=300)
+        print(f"Saved plot to {savefile}")
+
     plt.close()
 
 # ==========================================
@@ -129,18 +134,19 @@ def plotHeatmap_U(membership_matrix, savefile=None):
     if savefile:
         os.makedirs('figs', exist_ok=True)
         plt.savefig(savefile, bbox_inches='tight', dpi=300)
+        print(f"Saved plot to {savefile}")
+
     plt.close()
 
 # ==========================================
 
-def plot_beta_function(x_grid, beta_func_hat, savefile = None):
+def plot_log_function(x_grid, beta_func_hat, savefile = None):
     """
     Vẽ hàm beta ước lượng.
     """
     temp(fontsize=20)
     plt.figure(figsize=(7,6))
     plt.plot(x_grid, beta_func_hat, linewidth=3, color='black')
-    plt.xlabel('x')
     plt.ylabel(r'$\widehat{\beta}(x)$')
     plt.axhline(0, color='black', linestyle='--', linewidth=2)
 
@@ -149,8 +155,9 @@ def plot_beta_function(x_grid, beta_func_hat, savefile = None):
     if savefile:
         os.makedirs('figs', exist_ok=True)
         plt.savefig(savefile, bbox_inches='tight')
-    plt.close()
+        print(f"Saved plot to {savefile}")
 
+    plt.close()
 
 # =======================================
 
@@ -284,4 +291,62 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
     if savefile:
         os.makedirs('figs', exist_ok=True)
         plt.savefig(savefile, bbox_inches='tight', dpi=300)
+        print(f"Saved plot to {savefile}")
     plt.close(fig)
+
+# =============================
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib
+
+def plot_decision(x_grid, all_pdfs, proba, n_A, n_B, 
+                  savefile=None, title=None):
+    """
+    Plot PDFs with color encoded by proba or decision value.
+    Supports both continuous [0,1] and discrete {0,1}.
+    """
+    fig, ax = plt.subplots(figsize=(6, 4))
+    cmap = plt.cm.coolwarm
+
+    # --- Check if discrete 0/1 ---
+    unique_vals = np.unique(np.round(proba, 4))
+    is_discrete = np.all(np.isin(unique_vals, [0, 1]))
+
+    if is_discrete:
+        color_map_func = lambda p: cmap(0.0) if p == 0 else cmap(1.0)
+    else:
+        color_map_func = lambda p: cmap(p)
+
+    # --- Plot class 0 ---
+    for i in range(n_A):
+        ax.plot(x_grid, all_pdfs[i], color=color_map_func(proba[i]), alpha=0.6, linewidth=2)
+
+    # --- Plot class 1 ---
+    for i in range(n_A, n_A + n_B):
+        ax.plot(x_grid, all_pdfs[i], color=color_map_func(proba[i]), alpha=0.6, linewidth=2, linestyle='--')
+
+    # --- Colorbar only if continuous ---
+    if not is_discrete:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=matplotlib.colors.Normalize(vmin=0, vmax=1))
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax)
+        cbar.set_label('Decision Value')
+
+    if title:
+        ax.set_title(title)
+
+    plt.tight_layout()
+    if savefile:
+        os.makedirs(os.path.dirname(savefile), exist_ok=True)
+        plt.savefig(savefile, bbox_inches='tight', dpi=300)
+        print(f"Saved plot to {savefile}")
+        plt.close()
+    else:
+        plt.show()
+
+
+# ========================================
+
+

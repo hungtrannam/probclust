@@ -9,7 +9,7 @@
 # =======================================
 
 import numpy as np
-from utils.integral import int
+from utils.integral import int_trapz
 
 class Dist:
     """
@@ -34,7 +34,7 @@ class Dist:
             raise ValueError("Distributions must have the same length.")
         
         # Using L1 norm (Euclidean distance)
-        return int(np.abs(self.f1 - self.f2), Dim=self.Dim, h=self.h)
+        return int_trapz(np.abs(self.f1 - self.f2), Dim=self.Dim, h=self.h)
     
     def L2(self):
         """
@@ -43,7 +43,7 @@ class Dist:
         if len(self.f1) != len(self.f2):
             raise ValueError("Distributions must have the same length.")
         
-        return np.sqrt(int((self.f1 - self.f2)**2, Dim=self.Dim, h=self.h))
+        return np.sqrt(int_trapz((self.f1 - self.f2)**2, Dim=self.Dim, h=self.h))
     
     def H(self):
         """
@@ -56,7 +56,7 @@ class Dist:
         # H(P, Q) = 1/sqrt(2) * ||sqrt(P) - sqrt(Q)||
         sqrt_f1 = np.sqrt(self.f1)
         sqrt_f2 = np.sqrt(self.f2)
-        return np.sqrt(0.5) * np.sqrt(int((sqrt_f1 - sqrt_f2)**2, Dim=self.Dim, h=self.h))
+        return np.sqrt(0.5) * np.sqrt(int_trapz((sqrt_f1 - sqrt_f2)**2, Dim=self.Dim, h=self.h))
     
     def BC(self):
         """
@@ -68,7 +68,7 @@ class Dist:
         # Bhattacharyya distance is defined as:
         # D_B(P, Q) = -ln(BC(P, Q))
         # where BC(P, Q) is the Bhattacharyya coefficient
-        bc = int(np.sqrt(self.f1 * self.f2), Dim=self.Dim, h=self.h) + 1e-100 # Adding epsilon to avoid log(0)
+        bc = int_trapz(np.sqrt(self.f1 * self.f2), Dim=self.Dim, h=self.h) + 1e-100 # Adding epsilon to avoid log(0)
         return - np.log(bc)
     
     def W2(self):
@@ -100,4 +100,4 @@ class Dist:
             raise ValueError("Distributions must have the same length.")
         
         # Overlap is defined as the integral of the minimum of the two distributions
-        return 1-int(np.minimum(self.f1, self.f2), Dim=self.Dim, h=self.h)
+        return 1-int_trapz(np.minimum(self.f1, self.f2), Dim=self.Dim, h=self.h)
