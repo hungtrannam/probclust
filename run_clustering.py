@@ -4,15 +4,14 @@ import argparse
 from data.data_loader import generateGauss
 from utils.integral import grid
 from utils.vis import *
-from Models.clustering import KCF, KFCF, HCF, FCF, EM
+from Models.clustering import KCF, KFCF, HCF, FCF, EM, DBSCAN
 
 def main(args):
     # Tạo grid
-    h = args.bandwidth
-    x, _ = grid(h, start=-10, end=5)
+    x, _ = grid(args.bandwidth, start=-3, end=15)
 
-    mu = np.array([0.3, 4.0, 9.1, 1.0, 5.5, 8.0, 4.8])
-    sig = np.array([1,1,1,1,1,1,1])
+    mu = np.array([-0.3,  0.,   0.2,  3.5,  8.,   8.2, 12.5])
+    sig = np.array([.3,.4,.5, 0.3, 0.5, 0.4, 0.4])
 
     # Sinh Gaussian
     F_data = generateGauss(mu, sig, x, savefile='dataset/data.npz')
@@ -21,31 +20,46 @@ def main(args):
     plotPDF(x, F_data, savefile='figs/pdfs.pdf')
 
     # Khởi tạo và huấn luyện
-    cluster = HCF.Model(
+    # cluster = HCF.Model(
+    #     grid_x=x,
+    #     # num_clusters=args.num_clusters,
+    #     # max_iterations=args.max_iter,
+    #     distance_metric=args.distance_metric,
+    #     linkage=args.linkage, 
+    #     # kernel_type='BC',
+    #     # tolerance=args.tolerance,
+    #     # delta=args.delta,
+    #     # w1=args.w1,
+    #     # w2=args.w2,
+    #     # w3=args.w3,
+    #     bandwidth=args.bandwidth,
+    #     # seed=args.seed
+    # )
+    cluster = DBSCAN.Model(
         grid_x=x,
-        # num_clusters=args.num_clusters,
-        # max_iterations=args.max_iter,
+        eps=args.eps,
         distance_metric=args.distance_metric,
-        linkage='ward', 
-        # kernel_type='BC',
-        # tolerance=args.tolerance,
-        # delta=args.delta,
-        # w1=args.w1,
-        # w2=args.w2,
-        # w3=args.w3,
-        bandwidth=h,
-        # seed=args.seed
+        bandwidth=args.bandwidth,
+        min_samples=args.min_samples,
+        verbose=args.verbose
     )
-    cluster.fit(F_data)
-    cluster.print_tree()
-    plot_tree(cluster.tree, cluster.dist_matrix, savefile="figs/tree_L2_ward.pdf")
-    print(cluster.dist_matrix)
 
-    # U,V = cluster.get_results()
+
+    cluster.fit(F_data)
+    # cluster.print_tree()
+    # plot_tree(cluster.tree, cluster.dist_matrix, savefile=f"figs/tree_{args.distance_metric}_{args.linkage}.pdf")
+    # print(cluster.dist_matrix)
+
+    U = cluster.get_results()
+    print(U)
+    
+
+
+
 
     # Vẽ heatmap T
-    # plotHeatmap_U(U, savefile=os.path.join(args.save_dir, "T.pdf"))
-
+    plotHeatmap_U(U, savefile=os.path.join(args.save_dir, "U.pdf"))
+# 
     # # Vẽ heatmap tổng hợp
     # compile = np.vstack([T, I[np.newaxis, :], F[np.newaxis, :]])
     # plotHeatmap_U(compile, savefile=os.path.join(args.save_dir, "compile.pdf"))
@@ -67,6 +81,12 @@ if __name__ == "__main__":
     parser.add_argument('--bandwidth', type=float, default=0.01, help='Bandwidth for integration.')
     parser.add_argument('--save_dir', type=str, default='figs', help='Directory to save output figures.')
     parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility.')
+    parser.add_argument('--linkage', default='complete')
+    parser.add_argument('--eps', type=float, default=0.65)
+    parser.add_argument('--min_samples', type=int, default=1)
+    parser.add_argument('--verbose', default=False)
+
+
 
     args = parser.parse_args()
 

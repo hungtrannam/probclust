@@ -51,7 +51,7 @@ data = np.hstack([
     np.random.normal(loc=0, scale=1, size=N//3),
     np.random.normal(loc=5, scale=1, size=2*N//3)
 ])
-x_grid = np.linspace(-6, 15, 500)
+x_grid = np.linspace(-6, 16, 500)
 h = 1.06 * np.std(data) * N**(-1/5)
 
 # === Phân phối thực tế ===
@@ -82,7 +82,7 @@ for name in kernel_names:
 
 
 # Định dạng biểu đồ
-plt.legend(loc='upper right',fontsize=13)
+plt.legend(loc='upper right',fontsize=16)
 plt.ylim(0, 0.3)
 plt.tight_layout()
 
