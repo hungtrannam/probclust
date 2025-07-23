@@ -67,6 +67,12 @@ class Model:
         """
         return np.sum((self.alpha * self.y_train)[:, None] * K_new, axis=0) + self.bias
 
+
+    def predict_proba(self, K):
+        decision_values = K @ self.alpha + self.bias
+        probs = 1 / (1 + np.exp(-decision_values))
+        return np.vstack([1 - probs, probs]).T 
+    
     def predict(self, K_new):
         """
         Predict class labels {0,1} based on sign of decision_function.

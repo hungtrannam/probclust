@@ -35,12 +35,34 @@ def predict_new_sample_svm(new_pdf, all_pdfs, svm_model, kc):
     pred = svm_model.predict(K_new)[0]
     return pred, prob
 
+import shap
+
+def explain_logistic_model(log_model, X_design, basis_functions, x_grid):
+    explainer = shap.Explainer(log_model, X_design)
+    shap_values = explainer(X_design)
+
+    # Vẽ biểu đồ summary plot cho toàn bộ tập
+    shap.summary_plot(shap_values, X_design, show=False)
+    plt.savefig("figs/shap_summary_logistic.png", bbox_inches='tight')
+
+    # SHAP values cho sample mới
+    new_pdf = generateGauss([3], [0.9], x_grid).ravel()
+    moment = np.array([np.trapezoid(new_pdf * psi, x_grid) for psi in basis_functions])
+    X_new = np.hstack([1.0, moment])
+    shap_value_new = explainer(X_new.reshape(1, -1))
+
+    # Vẽ force plot cho sample mới
+    shap.plots.force(shap_value_new[0], matplotlib=True, show=False)
+    plt.savefig("figs/shap_force_logistic.pdf", bbox_inches='tight')
+
+
+
 def run_and_plot(x_grid, class1_data, class2_data, all_pdfs, y, new_pdf):
     n_A, n_B = len(class1_data), len(class2_data)
 
     # Logistic Regression
     print("\n=== Logistic Regression ===")
-    M = 20
+    M = 10
     basis_functions = generate_gaussian_basis(x_grid, M)
     X_design = prepare_logistic_features(all_pdfs, basis_functions, x_grid)
     log_model = Logistics.Model(n_iter=1000, l1_penalty=0.1, verbose=False)
@@ -53,6 +75,8 @@ def run_and_plot(x_grid, class1_data, class2_data, all_pdfs, y, new_pdf):
 
     plot_log_function(x_grid, sum(log_model.coef_[j] * basis_functions[j] for j in range(M)), "figs/beta_log.pdf")
     plot_decision(x_grid, all_pdfs, decision_values, n_A, n_B, 'figs/prob_log.pdf')
+    explain_logistic_model(log_model, X_design, basis_functions, x_grid)
+
 
     pred_log, prob_log = predict_new_sample_logistic(new_pdf, log_model, basis_functions, x_grid)
     print(f"[LOGISTIC] New sample → Class: {pred_log}, Probability (class 1): {prob_log:.4f}")
@@ -83,6 +107,7 @@ def run_and_plot(x_grid, class1_data, class2_data, all_pdfs, y, new_pdf):
     # Predict class và probability
     pred_svm = svm_model.predict(K_new)[0]
     print(f"[SVM] New sample → Class: {pred_svm}")
+    
 
 
 if __name__ == "__main__":
@@ -104,3 +129,4 @@ if __name__ == "__main__":
     new_pdf = generateGauss([3], [0.9], x_grid).ravel()
 
     run_and_plot(x_grid, class1_data, class2_data, all_pdfs, y, new_pdf)
+    
