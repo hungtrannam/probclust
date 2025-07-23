@@ -145,7 +145,7 @@ def plot_log_function(x_grid, beta_func_hat, savefile = None):
     Vẽ hàm beta ước lượng.
     """
     temp(fontsize=20)
-    plt.figure(figsize=(7,6))
+    plt.figure(figsize=(5,4))
     plt.plot(x_grid, beta_func_hat, linewidth=3, color='black')
     plt.ylabel(r'$\widehat{\beta}(x)$')
     plt.axhline(0, color='black', linestyle='--', linewidth=2)

@@ -64,11 +64,16 @@ class Model:
 
     @property
     def coef_(self):
+        return self.beta 
+
+    @property
+    def coef_vector_(self):
         return self.beta[1:]
 
     @property
     def intercept_(self):
         return self.beta[0]
+
 
 
 def compute_moments(pdfs, basis_functions, x_grid):
