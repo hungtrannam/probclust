@@ -105,9 +105,7 @@ def plotPDF_Theta(grid, pdfs, theta, savefile=None):
         os.makedirs('figs', exist_ok=True)
         plt.savefig(savefile, bbox_inches='tight', dpi=300)
         print(f"Saved plot to {savefile}")
-
-    plt.close()
-
+    
 # ==========================================
 
 def plotHeatmap_U(membership_matrix, savefile=None):
@@ -136,7 +134,6 @@ def plotHeatmap_U(membership_matrix, savefile=None):
         plt.savefig(savefile, bbox_inches='tight', dpi=300)
         print(f"Saved plot to {savefile}")
 
-    plt.close()
 
 # ==========================================
 
