@@ -114,13 +114,13 @@ def plotHeatmap_U(membership_matrix, savefile=None):
     """
     Vẽ heatmap cho ma trận phân vùng fuzzy clustering.
     """
-    plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(10, 5))
     temp(fontsize=20)
     
     sns.heatmap(
         membership_matrix,
         annot=True,
-        fmt=".2f",
+        fmt=".1f",
         cmap='Greys',   # Thang xám
         cbar=True,
         linewidths=0.5,
