@@ -134,6 +134,23 @@ def plotHeatmap_U(membership_matrix, savefile=None):
         plt.savefig(savefile, bbox_inches='tight', dpi=300)
         print(f"Saved plot to {savefile}")
 
+def plot_OF(obj_hist, savefile= None):
+    """
+    Vẽ heatmap cho ma trận phân vùng fuzzy clustering.
+    """
+    plt.figure(figsize=(6, 5))
+    temp(fontsize=20)
+    
+    plt.plot(obj_hist, lw = 3,color = 'black', marker='o')
+    plt.xlabel("Iteration")
+    plt.ylabel("Objective Function")
+    plt.tight_layout()
+    
+    if savefile:
+        os.makedirs('figs', exist_ok=True)
+        plt.savefig(savefile, bbox_inches='tight', dpi=300)
+        print(f"Saved plot to {savefile}")
+
 
 # ==========================================
 

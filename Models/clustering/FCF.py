@@ -55,7 +55,7 @@ class Model:
         for j, idx in enumerate(init_indices):
             self.centroids[j, :] = self.pdf_matrix[idx, :]
 
-
+        self.objective_history = []
         for iteration in range(self.max_iterations):
             # Update centroids
             for j in range(self.num_clusters):
@@ -78,11 +78,15 @@ class Model:
                     ratio = distance_matrix[i, j] / (distance_matrix[i, :] + 1e-10)
                     new_membership_matrix[i, j] = 1.0 / np.sum(ratio ** (2 / (self.fuzziness - 1)))
 
-            # Check convergence
+            self.objective_value = np.sum((new_membership_matrix ** self.fuzziness) * distance_matrix)
+            self.objective_history.append(self.objective_value) 
+
+            # Kiểm tra hội tụ
             delta = np.linalg.norm(new_membership_matrix - self.membership_matrix)
+
+
             if verbose:
-                objective_value = np.sum((new_membership_matrix ** self.fuzziness) * distance_matrix)
-                print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {objective_value:.6f}")    
+                print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {self.objective_value:.6f}")    
             if delta < self.tolerance:
                 if verbose:
                     print("Converged.")
@@ -123,7 +127,7 @@ class Model:
         - membership_matrix.T: np.ndarray, shape [num_clusters, num_pdfs]
         - centroids: np.ndarray, shape [num_clusters, num_points]
         """
-        return self.membership_matrix.copy().T, self.centroids.copy()
+        return self.membership_matrix.copy().T, self.centroids.copy(), self.objective_history.copy()
 
     def get_hard_assignments(self):
         """
