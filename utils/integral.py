@@ -14,7 +14,7 @@ def grid(h, start=-20, end=20):
     """
     Tạo lưới giá trị từ start đến end với bước h.
     """
-    return np.arange(start, end + h, h), h
+    return np.arange(start, end + h, h)
 
 def int_trapz(fv, h, Dim):
     """
