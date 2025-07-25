@@ -3,7 +3,7 @@ from utils.dist import Dist
 
 class Model:
     def __init__(self, grid_x, num_clusters=3, max_iterations=100, tolerance=1e-5,
-                 distance_metric='L2', bandwidth=0.01, seed = None):
+                 distance_metric='L2', bandwidth=0.01, seed = None,verbose=False):
         """
         Classic K-Means Clustering for probability density functions.
 
@@ -23,6 +23,7 @@ class Model:
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
         self.seed = seed
+        self.verbose=verbose
 
     def _compute_distance(self, pdf1, pdf2):
         distance_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
@@ -80,10 +81,10 @@ class Model:
 
             # Check convergence
             num_changed = np.sum(prev_assignments != self.cluster_assignments)
-            if verbose:
+            if self.verbose:
                 print(f"Iteration {iteration + 1}, changed assignments = {num_changed}, objective = {self.objective_value:.6f}")
             if num_changed == 0:
-                if verbose:
+                if self.verbose:
                     print("Converged.")
                 break
 
