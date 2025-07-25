@@ -48,6 +48,7 @@ class Model:
         # Initialize cluster centroids (prototypes)
         self.centroids = np.zeros((self.num_clusters, self.num_points))  # [num_clusters, num_points]
 
+        self.objective_history = []
         for iteration in range(self.max_iterations):
             prev_assignments = self.cluster_assignments.copy()
 
@@ -71,15 +72,16 @@ class Model:
             self.cluster_assignments = np.argmin(distance_matrix, axis=1)
 
             # Calculate objective function
-            objective_value = np.sum([
+            self.objective_value = np.sum([
                 self._compute_distance(self.pdf_matrix[pdf_idx, :], self.centroids[self.cluster_assignments[pdf_idx], :])
                 for pdf_idx in range(self.num_pdfs)
             ])
+            self.objective_history.append(self.objective_value) 
 
             # Check convergence
             num_changed = np.sum(prev_assignments != self.cluster_assignments)
             if verbose:
-                print(f"Iteration {iteration + 1}, changed assignments = {num_changed}, objective = {objective_value:.6f}")
+                print(f"Iteration {iteration + 1}, changed assignments = {num_changed}, objective = {self.objective_value:.6f}")
             if num_changed == 0:
                 if verbose:
                     print("Converged.")
@@ -119,9 +121,9 @@ class Model:
         - partition_matrix: np.ndarray [num_clusters, num_pdfs] (one-hot transposed)
         - centroids: np.ndarray [num_clusters, num_points]
         """
-        return self.partition_matrix.T.copy(), self.centroids.copy()
+        return self.partition_matrix.T.copy(), self.centroids.copy(),  self.objective_history.copy()
 
-    def get_cluster_assignments(self):
+    def get_hard_assignments(self):
         """
         Returns:
         - cluster_assignments: np.ndarray [num_pdfs]

@@ -3,20 +3,9 @@ from utils.dist import Dist
 
 class Model:
     def __init__(self, grid_x, num_clusters=3, fuzziness=2, max_iterations=100,
-                 tolerance=1e-5, kernel_type='L2', gamma=1.0, bandwidth=0.01, seed= None):
+                 tolerance=1e-5, kernel_type='L2', gamma=1.0, bandwidth=0.01, seed= None, verbose=False):
         """
         Kernel Fuzzy C-Means clustering for probability density functions.
-
-        Parameters:
-        - pdf_matrix: np.ndarray, shape [num_points, num_pdfs]
-        - grid_x: np.ndarray, grid points
-        - num_clusters: int, number of clusters
-        - fuzziness: float, fuzziness coefficient (m > 1)
-        - max_iterations: int, maximum number of iterations
-        - tolerance: float, convergence threshold
-        - kernel_type: str, 'L1' (Laplacian) or 'L2' (Gaussian)
-        - gamma: float, kernel parameter
-        - bandwidth: float, integration bandwidth
         """
         self.grid_x = grid_x
         self.num_clusters = num_clusters
@@ -27,6 +16,7 @@ class Model:
         self.gamma = gamma
         self.bandwidth = bandwidth
         self.seed= seed
+        self.verbose = verbose
 
     def _kernel_function(self, pdf1, pdf2):
         dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
@@ -66,6 +56,7 @@ class Model:
         
         eps_small = 1e-100
 
+        self.objective_history = []
         for iteration in range(self.max_iterations):
             previous_U = self.membership_matrix.copy()
 
@@ -96,18 +87,24 @@ class Model:
 
             # Check convergence
             delta = np.linalg.norm(self.membership_matrix - previous_U)
-            if verbose:
-                if self.kernel_type == 'BC':
-                    distances = 1-kernel_to_centroids
-                else:
-                    distances = np.sqrt(2 * (1 - kernel_to_centroids))
 
-                objective_value = np.sum((self.membership_matrix ** self.fuzziness) * distances)
-                print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {objective_value:.6f}")  
 
+            if self.kernel_type == 'BC':
+                distances = 1-kernel_to_centroids
+            else:
+                distances = np.sqrt(2 * (1 - kernel_to_centroids))
+
+            self.objective_value = np.sum((self.membership_matrix ** self.fuzziness) * distances)
+            self.objective_history.append(self.objective_value) 
+
+
+            if self.verbose:
+                print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {self.objective_value:.6f}")    
             if delta < self.tolerance:
-                print("Converged.")
+                if self.verbose:
+                    print("Converged.")
                 break
+
 
     def predict(self, new_pdfs):
         """
@@ -148,7 +145,14 @@ class Model:
     def get_results(self):
         """
         Returns:
-        - membership_matrix.T: np.ndarray, shape [num_clusters, num_pdfs]
-        - centroids.T: np.ndarray, shape [num_points, num_clusters]
+        - partition_matrix: np.ndarray [num_clusters, num_pdfs] (one-hot transposed)
+        - centroids: np.ndarray [num_clusters, num_points]
         """
-        return self.membership_matrix.copy().T, self.centroids
+        return self.membership_matrix.copy().T, self.centroids.copy(),  self.objective_history.copy()
+
+    def get_hard_assignments(self):
+        """
+        Returns:
+        - hard_assignments: np.ndarray, shape [num_pdfs], cluster index per sample
+        """
+        return np.argmax(self.membership_matrix, axis=1)
