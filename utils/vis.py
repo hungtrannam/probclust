@@ -451,3 +451,4 @@ def plot_CVI_with_k(num_clusters_range, silhouette_scores, dunn_scores, dbi_scor
         plt.close()
     else:
         plt.show()
+
