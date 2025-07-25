@@ -171,7 +171,6 @@ def plot_log_function(x_grid, beta_func_hat, savefile = None):
         plt.savefig(savefile, bbox_inches='tight')
         print(f"Saved plot to {savefile}")
 
-    plt.close()
 
 # =======================================
 
@@ -252,6 +251,7 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
 
     # Vẽ figure chia 2 phần: trên (dendrogram) và dưới (heatmap)
     fig = plt.figure(figsize=(4, 4))
+    temp(20)
     gs = fig.add_gridspec(2, 1, height_ratios=[1, 2], hspace=0.08)
 
     # === Dendrogram ===
@@ -306,14 +306,10 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
         os.makedirs('figs', exist_ok=True)
         plt.savefig(savefile, bbox_inches='tight', dpi=300)
         print(f"Saved plot to {savefile}")
-    plt.close(fig)
+    
 
 # =============================
 
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
 
 def plot_decision(x_grid, all_pdfs, proba, n_A, n_B, 
                   savefile=None, title=None):
@@ -364,3 +360,94 @@ def plot_decision(x_grid, all_pdfs, proba, n_A, n_B,
 # ========================================
 
 
+
+def plot_silhouette_values(F_data, labels, distance_metric='L2', bandwidth=0.01, grid=None, savefile=None):
+    """
+    Vẽ biểu đồ giá trị Silhouette cho từng hàm mật độ.
+    """
+    from utils.vali import CVI
+    evaluator = CVI(distance_metric=distance_metric, bandwidth=bandwidth, grid=grid)
+    D = evaluator._compute_distance_matrix(F_data)
+    
+    n = F_data.shape[0]
+    clusters = np.unique(labels)
+    silhouette_vals = np.zeros(n)
+
+    for i in range(n):
+        same_cluster = labels == labels[i]
+        a_i = np.mean(D[i, same_cluster]) if np.sum(same_cluster) > 1 else 0
+        b_i = np.inf
+        for c in clusters:
+            if c != labels[i]:
+                b_i = min(b_i, np.mean(D[i, labels == c]))
+        silhouette_vals[i] = (b_i - a_i) / max(a_i, b_i) if max(a_i, b_i) > 0 else 0
+
+    # Vẽ biểu đồ
+    fig, ax = plt.subplots(figsize=(6, 4))
+    y_lower = 0
+    for c in clusters:
+        cluster_vals = silhouette_vals[labels == c]
+        cluster_vals.sort()
+        size_c = cluster_vals.shape[0]
+        ax.fill_betweenx(np.arange(y_lower, y_lower + size_c),
+                         0, cluster_vals, alpha=0.7, label=f'Cluster {c}')
+        y_lower += size_c
+
+    ax.axvline(np.mean(silhouette_vals), color="red", linestyle="--", label='Mean Silhouette')
+    ax.set_xlabel("Silhouette")
+    ax.legend()
+    plt.tight_layout()
+    if savefile:
+        os.makedirs(os.path.dirname(savefile), exist_ok=True)
+        plt.savefig(savefile, bbox_inches='tight', dpi=300)
+        print(f"Saved plot to {savefile}")
+        plt.close()
+    else:
+        plt.show()
+
+    return silhouette_vals
+
+def plot_CVI_with_k(num_clusters_range, silhouette_scores, dunn_scores, dbi_scores, savefile=None):
+    
+    """
+    Vẽ biểu đồ CVI (Silhouette, Dunn, Davies-Bouldin) với số cụm k.
+    """
+
+    from utils.vali import find_elbow_k
+    k_sil = find_elbow_k(list(num_clusters_range), silhouette_scores)
+    k_dunn = find_elbow_k(list(num_clusters_range), dunn_scores)
+    k_dbi = find_elbow_k(list(num_clusters_range), [-d for d in dbi_scores]) 
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 8))
+
+    # --- Frame 1: Silhouette & Dunn (Lớn là tốt hơn)
+    ax1.plot(num_clusters_range, silhouette_scores, 'o-', color='black',
+             label=f'Silhouette (k = {k_sil})', lw=3, markersize=9)
+    ax1.axvline(k_sil, color='black', linestyle='-', alpha=0.5, lw=3)
+
+    ax1.plot(num_clusters_range, dunn_scores, 's--', color='black',
+             label=f'Dunn Index (k = {k_dunn})', lw=3, markersize=9)
+    ax1.axvline(k_dunn, color='black', linestyle='--', alpha=0.5, lw=3)
+
+    ax1.set_ylabel("CVI")
+    ax1.grid(axis='x', linestyle='--')
+    ax1.legend()
+
+    # --- Frame 2: DBI (Bé là tốt hơn)
+    ax2.plot(num_clusters_range, dbi_scores, 'o-.', color='black',
+             label=f'Davies-Bouldin (k = {k_dbi})', lw=3, markersize=9)
+    ax2.axvline(k_dbi, color='black', linestyle='-.', alpha=0.5, lw=3)
+
+    ax2.set_xlabel("Số chùm")
+    ax2.set_ylabel("CVI")
+    ax2.grid(axis='x', linestyle='--')
+    ax2.legend()
+
+    plt.tight_layout()
+    if savefile:
+        os.makedirs(os.path.dirname(savefile), exist_ok=True)
+        plt.savefig(savefile, bbox_inches='tight', dpi=300)
+        print(f"Saved plot to {savefile}")
+        plt.close()
+    else:
+        plt.show()
