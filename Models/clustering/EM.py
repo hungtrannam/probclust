@@ -1,9 +1,9 @@
 import numpy as np
 from utils.dist import Dist
 
-class EMClustering:
-    def __init__(self, pdf_matrix, grid_x, num_clusters=3, max_iterations=100, tolerance=1e-5,
-                 distance_metric='L2', bandwidth=0.01, seed = None):
+class Model:
+    def __init__(self, grid_x, num_clusters=3, max_iterations=100, tolerance=1e-5,
+                 distance_metric='L2', bandwidth=0.01, seed = None, verbose=False):
         """
         EM clustering for probability density functions.
 
@@ -16,7 +16,6 @@ class EMClustering:
         - distance_metric: str, type of distance ('L1', 'L2', 'H', 'BC', 'W2')
         - bandwidth: float, integration bandwidth parameter
         """
-        self.pdf_matrix = pdf_matrix  # [num_pdfs, num_points]
         self.grid_x = grid_x
         self.num_clusters = num_clusters
         self.max_iterations = max_iterations
@@ -24,22 +23,7 @@ class EMClustering:
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
         self.seed = seed
-        self.num_pdfs, self.num_points = pdf_matrix.shape
-
-        # Initialize soft responsibility matrix (gamma): [num_pdfs, num_clusters]
-        if self.seed is not None:
-            np.random.seed(self.seed)
-
-        self.responsibilities = np.random.dirichlet(np.ones(num_clusters), size=self.num_pdfs)
-
-        # Initialize cluster prototypes (centroids): [num_clusters, num_points]
-        self.centroids = np.zeros((self.num_clusters, self.num_points))
-        init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
-        for j, idx in enumerate(init_indices):
-            self.centroids[j, :] = self.pdf_matrix[idx, :]
-
-        # Initialize cluster priors (weights)
-        self.cluster_priors = np.ones(self.num_clusters) / self.num_clusters
+        self.verbose=verbose
 
     def _compute_distance(self, pdf1, pdf2):
         dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
@@ -52,7 +36,26 @@ class EMClustering:
         }
         return distance_map.get(self.distance_metric, None)
 
-    def fit(self, verbose=True):
+    def fit(self, pdf_matrix, verbose=True):
+
+        self.pdf_matrix= pdf_matrix
+        self.num_pdfs, self.num_points = pdf_matrix.shape
+
+        # Initialize soft responsibility matrix (gamma): [num_pdfs, num_clusters]
+        if self.seed is not None:
+            np.random.seed(self.seed)
+
+        self.responsibilities = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
+
+        # Initialize cluster prototypes (centroids): [num_clusters, num_points]
+        self.centroids = np.zeros((self.num_clusters, self.num_points))
+        init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
+        for j, idx in enumerate(init_indices):
+            self.centroids[j, :] = self.pdf_matrix[idx, :]
+
+        # Initialize cluster priors (weights)
+        self.cluster_priors = np.ones(self.num_clusters) / self.num_clusters
+
         for iteration in range(self.max_iterations):
             # M-step: update centroids (prototypes)
             for j in range(self.num_clusters):
@@ -77,10 +80,10 @@ class EMClustering:
 
             # Check convergence
             delta = np.linalg.norm(new_responsibilities - self.responsibilities)
-            if verbose:
+            if self.verbose:
                 print(f"Iteration {iteration + 1}, delta = {delta:.6f}")
             if delta < self.tolerance:
-                if verbose:
+                if self.verbose:
                     print("Converged.")
                 break
             self.responsibilities = new_responsibilities
