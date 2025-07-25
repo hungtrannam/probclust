@@ -14,7 +14,7 @@ echo "🟢 Updating the system..."
 sudo apt update -y && sudo apt upgrade -y
 
 ############## System Dependencies ##############
-echo "🛠️ Installing system dependencies..."
+echo "Installing system dependencies..."
 
 ############## Create virtual environment ##############
 if [ ! -d ".venv" ]; then
@@ -41,7 +41,9 @@ pip install --no-cache-dir \
     argparse torch torchvision torchmetrics \
     scikit-learn einops optunahub cmaes\
     gpustat statsmodels gputil \
-    shap ipykernel
+    shap ipykernel\
+    opencv-python\
+    scikit-image
 
 
 ############## Save environment ##############

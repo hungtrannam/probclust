@@ -8,7 +8,7 @@ from Models.clustering import KCF, KFCF, HCF, FCF, EM, DBSCAN, NCF
 
 def main(args):
     # Tạo grid
-    x, _ = grid(args.bandwidth, start=-4, end=15)
+    x = grid(args.bandwidth, start=-4, end=15)
 
     # mu = np.array([-0.3,  0.,   0.2,  3.5,  8.,   8.2, 12.5])
     # sig = np.array([.3,.4,.5, 0.3, 0.5, 0.4, 0.4])

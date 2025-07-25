@@ -66,7 +66,7 @@ class Model:
             self.visited[i] = True
             neighbors = self._region_query(i)
             if len(neighbors) < self.min_samples:
-                self.labels[i] = -1  # nhiễu
+                self.labels[i] = -1  # 
             else:
                 self._expand_cluster(i, neighbors, cluster_id)
                 if self.verbose:

@@ -3,7 +3,7 @@ from utils.dist import Dist
 
 class Model:
     def __init__(self, grid_x, num_clusters=3, fuzziness=2, max_iterations=100,
-                 tolerance=1e-5, distance_metric='L2', bandwidth=0.01, seed = None):
+                 tolerance=1e-5, distance_metric='L2', bandwidth=0.01, seed = None, verbose = False):
         """
         Fuzzy C-Means Clustering for probability density functions.
 
@@ -25,6 +25,7 @@ class Model:
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
         self.seed = seed
+        self.verbose=verbose
 
     def _compute_distance(self, pdf1, pdf2):
         dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
@@ -85,10 +86,10 @@ class Model:
             delta = np.linalg.norm(new_membership_matrix - self.membership_matrix)
 
 
-            if verbose:
+            if self.verbose:
                 print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {self.objective_value:.6f}")    
             if delta < self.tolerance:
-                if verbose:
+                if self.verbose:
                     print("Converged.")
                 break
 
