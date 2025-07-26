@@ -134,8 +134,51 @@ class CVI:
                     d += 1
         return (a + d) / (a + b + c + d)
 
-    def adjusted_rand_index(self, labels_true, labels_pred):
-        return adjusted_rand_score(labels_true, labels_pred)
+    def adjusted_rand_index(labels_true, labels_pred):
+
+        def pair_confusion_matrix(labels_true, labels_pred):
+            labels_true = np.asarray(labels_true)
+            labels_pred = np.asarray(labels_pred)
+            n_samples = labels_true.shape[0]
+
+            # Xác định tất cả nhãn
+            classes_true = np.unique(labels_true)
+            classes_pred = np.unique(labels_pred)
+            n_true = classes_true.shape[0]
+            n_pred = classes_pred.shape[0]
+
+            # Ma trận contingency
+            contingency = np.zeros((n_true, n_pred), dtype=np.int64)
+            for i, c_true in enumerate(classes_true):
+                mask_true = labels_true == c_true
+                for j, c_pred in enumerate(classes_pred):
+                    contingency[i, j] = np.sum(labels_pred[mask_true] == c_pred)
+
+            # Tính toán
+            n_c = contingency.sum(axis=1)
+            n_k = contingency.sum(axis=0)
+            sum_comb = lambda x: (x * (x - 1)) // 2
+
+            sum_squares = (contingency * (contingency - 1) // 2).sum()
+            sum_c = sum_comb(n_c).sum()
+            sum_k = sum_comb(n_k).sum()
+            total_pairs = sum_comb(n_samples)
+
+            C = np.zeros((2, 2), dtype=np.int64)
+            C[1, 1] = sum_squares
+            C[0, 1] = sum_k - sum_squares
+            C[1, 0] = sum_c - sum_squares
+            C[0, 0] = total_pairs - C[1, 1] - C[0, 1] - C[1, 0]
+            return C, sum_c, sum_k, total_pairs, sum_squares
+        C, sum_c, sum_k, total_pairs, sum_squares = pair_confusion_matrix(labels_true, labels_pred)
+
+        # ARI
+        index = sum_squares
+        expected_index = (sum_c * sum_k) / total_pairs
+        max_index = 0.5 * (sum_c + sum_k)
+        ARI = (index - expected_index) / (max_index - expected_index)
+        return ARI
+
 
     def nmi(self, labels_true, labels_pred):
         return normalized_mutual_info_score(labels_true, labels_pred)
