@@ -152,26 +152,6 @@ def plot_OF(obj_hist, savefile= None):
         print(f"Saved plot to {savefile}")
 
 
-# ==========================================
-
-def plot_log_function(x_grid, beta_func_hat, savefile = None):
-    """
-    Vẽ hàm beta ước lượng.
-    """
-    temp(fontsize=20)
-    plt.figure(figsize=(5,4))
-    plt.plot(x_grid, beta_func_hat, linewidth=3, color='black')
-    plt.ylabel(r'$\widehat{\beta}(x)$')
-    plt.axhline(0, color='black', linestyle='--', linewidth=2)
-
-    plt.tight_layout()
-    
-    if savefile:
-        os.makedirs('figs', exist_ok=True)
-        plt.savefig(savefile, bbox_inches='tight')
-        print(f"Saved plot to {savefile}")
-
-
 # =======================================
 
 
@@ -311,55 +291,6 @@ def plot_tree(tree, dist_matrix, verbose=False, savefile=None):
 # =============================
 
 
-def plot_decision(x_grid, all_pdfs, proba, n_A, n_B, 
-                  savefile=None, title=None):
-    """
-    Plot PDFs with color encoded by proba or decision value.
-    Supports both continuous [0,1] and discrete {0,1}.
-    """
-    fig, ax = plt.subplots(figsize=(6, 4))
-    cmap = plt.cm.coolwarm
-
-    # --- Check if discrete 0/1 ---
-    unique_vals = np.unique(np.round(proba, 4))
-    is_discrete = np.all(np.isin(unique_vals, [0, 1]))
-
-    if is_discrete:
-        color_map_func = lambda p: cmap(0.0) if p == 0 else cmap(1.0)
-    else:
-        color_map_func = lambda p: cmap(p)
-
-    # --- Plot class 0 ---
-    for i in range(n_A):
-        ax.plot(x_grid, all_pdfs[i], color=color_map_func(proba[i]), alpha=0.6, linewidth=2)
-
-    # --- Plot class 1 ---
-    for i in range(n_A, n_A + n_B):
-        ax.plot(x_grid, all_pdfs[i], color=color_map_func(proba[i]), alpha=0.6, linewidth=2, linestyle='--')
-
-    # --- Colorbar only if continuous ---
-    if not is_discrete:
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=matplotlib.colors.Normalize(vmin=0, vmax=1))
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax)
-        cbar.set_label('Decision Value')
-
-    if title:
-        ax.set_title(title)
-
-    plt.tight_layout()
-    if savefile:
-        os.makedirs(os.path.dirname(savefile), exist_ok=True)
-        plt.savefig(savefile, bbox_inches='tight', dpi=300)
-        print(f"Saved plot to {savefile}")
-        plt.close()
-    else:
-        plt.show()
-
-
-# ========================================
-
-
 
 def plot_silhouette_values(F_data, labels, distance_metric='L2', bandwidth=0.01, grid=None, savefile=None):
     """
@@ -442,6 +373,53 @@ def plot_CVI_with_k(num_clusters_range, silhouette_scores, dunn_scores, dbi_scor
     ax2.set_ylabel("CVI")
     ax2.grid(axis='x', linestyle='--')
     ax2.legend()
+
+    plt.tight_layout()
+    if savefile:
+        os.makedirs(os.path.dirname(savefile), exist_ok=True)
+        plt.savefig(savefile, bbox_inches='tight', dpi=300)
+        print(f"Saved plot to {savefile}")
+        plt.close()
+    else:
+        plt.show()
+
+
+
+
+
+
+# ==========================================
+
+def plot_beta(x_grid, model, basis_functions, savefile=None):
+    """
+    Vẽ hàm beta(x) (đường liên tục) và các hệ số beta_m (bar chart) 
+    trong cùng 1 frame với trục x chung, kèm legend.
+    """
+    temp(20)
+    beta_vals = np.array(model.coef_vector_)
+    w = sum(b * psi for b, psi in zip(beta_vals, basis_functions))
+
+    fig, ax1 = plt.subplots(figsize=(6, 4))
+    line, = ax1.plot(x_grid, w, color='black', linewidth=2, label=r'$\widehat{\beta}(x)$')
+    ax1.axhline(0, color='black', linestyle='--')
+    ax1.set_ylabel(r'$\widehat{\beta}(x)$', fontsize=14)
+
+    # Tạo trục x thứ hai
+    ax2 = ax1.twiny()
+    M = len(beta_vals)
+    x_pos = np.linspace(x_grid.min(), x_grid.max(), M)
+    bars = ax2.bar(x_pos, beta_vals, width=(x_grid.max() - x_grid.min()) / (M * 2),
+                   color='gray', alpha=0.5, label=r'$\psi_m$')
+
+    ax2.set_xticks(x_pos)
+    ax2.set_xticklabels([fr'$\psi_{{{i+1}}}$' for i in range(M)], fontsize=14)
+
+    ax2.set_xlim(ax1.get_xlim())
+
+    # Gộp legend từ cả 2 trục
+    lines = [line, bars]
+    labels = [line.get_label(), bars.get_label()]
+    ax1.legend(lines, labels, fontsize=12, loc='best')
 
     plt.tight_layout()
     if savefile:

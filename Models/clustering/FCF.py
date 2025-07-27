@@ -1,21 +1,45 @@
 import numpy as np
 from utils.dist import Dist
 
-class Model:
-    def __init__(self, grid_x, num_clusters=3, fuzziness=2, max_iterations=100,
-                 tolerance=1e-5, distance_metric='L2', bandwidth=0.01, seed = None, verbose = False):
-        """
-        Fuzzy C-Means Clustering for probability density functions.
 
-        Parameters:
-        - pdf_matrix: np.ndarray, shape [num_pdfs, num_points]
-        - grid_x: grid points for integration / distance
-        - num_clusters: number of clusters
-        - fuzziness: fuzziness coefficient m (>1)
-        - max_iterations: maximum number of iterations
-        - tolerance: convergence threshold (epsilon)
-        - distance_metric: distance type ('L1', 'L2', 'H', 'BC', 'W2')
-        - bandwidth: bandwidth parameter for distance calculation
+class Model:
+    """
+    Fuzzy C-Means Clustering for probability density functions (PDFs).
+    """
+
+    def __init__(
+        self,
+        grid_x: np.ndarray,
+        num_clusters: int = 3,
+        fuzziness: float = 2.0,
+        max_iterations: int = 100,
+        tolerance: float = 1e-5,
+        distance_metric: str = "L2",
+        bandwidth: float = 0.01,
+        seed: int = None,
+        verbose: bool = False,
+    ):
+        """
+        Parameters
+        ----------
+        grid_x : np.ndarray
+            Lưới x để tính tích phân và khoảng cách.
+        num_clusters : int
+            Số cụm.
+        fuzziness : float
+            Hệ số m (>1).
+        max_iterations : int
+            Số vòng lặp tối đa.
+        tolerance : float
+            Ngưỡng hội tụ.
+        distance_metric : str
+            Loại khoảng cách ('L1', 'L2', 'H', 'BC', 'W2').
+        bandwidth : float
+            Bước tích phân h.
+        seed : int
+            Seed random (nếu cần).
+        verbose : bool
+            In log nếu True.
         """
         self.grid_x = grid_x
         self.num_clusters = num_clusters
@@ -25,114 +49,105 @@ class Model:
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
         self.seed = seed
-        self.verbose=verbose
+        self.verbose = verbose
 
-    def _compute_distance(self, pdf1, pdf2):
+        self.pdf_matrix = None
+        self.centroids = None
+        self.membership_matrix = None
+        self.objective_history = []
+
+    def _compute_distance(self, pdf1: np.ndarray, pdf2: np.ndarray) -> float:
+        """Tính khoảng cách giữa 2 PDF."""
         dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
         distance_map = {
-            'L1': dist_obj.L1(),
-            'L2': dist_obj.L2(),
-            'H': dist_obj.H(),
-            'BC': dist_obj.BC(),
-            'W2': dist_obj.W2()
+            "L1": dist_obj.L1(),
+            "L2": dist_obj.L2(),
+            "H": dist_obj.H(),
+            "BC": dist_obj.BC(),
+            "W2": dist_obj.W2(),
         }
-        return distance_map.get(self.distance_metric, None)
+        return distance_map[self.distance_metric]
 
-    def fit(self, pdf_matrix, verbose=True):
-        self.pdf_matrix = pdf_matrix  # [num_pdfs, num_points]
-        self.num_pdfs, self.num_points = pdf_matrix.shape
+    def _update_centroids(self) -> None:
+        """Cập nhật tâm cụm (centroid)."""
+        weights = self.membership_matrix ** self.fuzziness
+        self.centroids = (weights.T @ self.pdf_matrix) / (np.sum(weights.T, axis=1, keepdims=True) + 1e-12)
 
-        # Initialize fuzzy membership matrix U [num_pdfs, num_clusters]
+    def _compute_distance_matrix(self) -> np.ndarray:
+        """Tính ma trận khoảng cách [num_pdfs, num_clusters]."""
+        num_pdfs = self.pdf_matrix.shape[0]
+        return np.array([
+            [self._compute_distance(self.pdf_matrix[i], self.centroids[j]) + 1e-10
+             for j in range(self.num_clusters)]
+            for i in range(num_pdfs)
+        ])
+
+    def _update_membership_matrix(self, distance_matrix: np.ndarray) -> np.ndarray:
+        """Cập nhật ma trận membership U."""
+        power = 2 / (self.fuzziness - 1)
+        inv_distance = 1.0 / (distance_matrix + 1e-10)
+        inv_distance_power = inv_distance ** power
+        return inv_distance_power / np.sum(inv_distance_power, axis=1, keepdims=True)
+
+    def fit(self, pdf_matrix: np.ndarray) -> None:
+        """Huấn luyện FCM."""
+        self.pdf_matrix = pdf_matrix
+        self.num_pdfs, _ = pdf_matrix.shape
+
         if self.seed is not None:
             np.random.seed(self.seed)
 
+        # Khởi tạo U ngẫu nhiên (mỗi hàng sum=1)
         self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
 
-        # Initialize centroids (cluster prototypes) [num_clusters, num_points]
-        self.centroids = np.zeros((self.num_clusters, self.num_points))
-
-        # Randomly pick initial centroids from data points
+        # Khởi tạo centroid từ dữ liệu
         init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
-        for j, idx in enumerate(init_indices):
-            self.centroids[j, :] = self.pdf_matrix[idx, :]
+        self.centroids = pdf_matrix[init_indices, :]
 
-        self.objective_history = []
-        for iteration in range(self.max_iterations):
-            # Update centroids
-            for j in range(self.num_clusters):
-                weights = self.membership_matrix[:, j] ** self.fuzziness  # [num_pdfs]
-                numerator = np.sum(weights[:, np.newaxis] * self.pdf_matrix, axis=0)  # [num_points]
-                denominator = np.sum(weights)
-                self.centroids[j, :] = numerator / (denominator + 1e-10)
+        self.objective_history.clear()
 
-            # Update distances
-            distance_matrix = np.array([
-                [self._compute_distance(self.pdf_matrix[i, :], self.centroids[j, :]) + 1e-10
-                 for j in range(self.num_clusters)]
-                for i in range(self.num_pdfs)
-            ])  # [num_pdfs, num_clusters]
+        for it in range(self.max_iterations):
+            self._update_centroids()
+            dist_matrix = self._compute_distance_matrix()
+            new_U = self._update_membership_matrix(dist_matrix)
 
-            # Update membership matrix U
-            new_membership_matrix = np.zeros((self.num_pdfs, self.num_clusters))
-            for i in range(self.num_pdfs):
-                for j in range(self.num_clusters):
-                    ratio = distance_matrix[i, j] / (distance_matrix[i, :] + 1e-10)
-                    new_membership_matrix[i, j] = 1.0 / np.sum(ratio ** (2 / (self.fuzziness - 1)))
-
-            self.objective_value = np.sum((new_membership_matrix ** self.fuzziness) * distance_matrix)
-            self.objective_history.append(self.objective_value) 
+            # Tính hàm mục tiêu
+            self.objective_value = np.sum((new_U ** self.fuzziness) * dist_matrix)
+            self.objective_history.append(self.objective_value)
 
             # Kiểm tra hội tụ
-            delta = np.linalg.norm(new_membership_matrix - self.membership_matrix)
-
-
+            delta = np.linalg.norm(new_U - self.membership_matrix)
             if self.verbose:
-                print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {self.objective_value:.6f}")    
+                print(f"Iteration {it + 1}, delta = {delta:.6f}, objective = {self.objective_value:.6f}")
             if delta < self.tolerance:
                 if self.verbose:
                     print("Converged.")
                 break
 
-            self.membership_matrix = new_membership_matrix
+            self.membership_matrix = new_U
 
-    def predict(self, new_pdfs):
-        """
-        Predict fuzzy membership for new pdf(s).
-
-        Parameters:
-        - new_pdfs: np.ndarray, shape [num_new_pdfs, num_points]
-
-        Returns:
-        - memberships: np.ndarray, shape [num_new_pdfs, num_clusters]
-        """
+    def predict(self, new_pdfs: np.ndarray) -> np.ndarray:
+        """Dự đoán membership cho các PDF mới."""
         if new_pdfs.ndim == 1:
-            new_pdfs = new_pdfs[np.newaxis, :]  # [1, num_points]
+            new_pdfs = new_pdfs[np.newaxis, :]
 
-        num_new = new_pdfs.shape[0]
-        memberships = np.zeros((num_new, self.num_clusters))
-
-        for idx in range(num_new):
+        memberships = []
+        for pdf in new_pdfs:
             distances = np.array([
-                self._compute_distance(new_pdfs[idx, :], self.centroids[j, :]) + 1e-10
+                self._compute_distance(pdf, self.centroids[j]) + 1e-10
                 for j in range(self.num_clusters)
             ])
-            for j in range(self.num_clusters):
-                ratio = distances[j] / (distances + 1e-10)
-                memberships[idx, j] = 1.0 / np.sum(ratio ** (2 / (self.fuzziness - 1)))
+            power = 2 / (self.fuzziness - 1)
+            inv_distance = 1.0 / distances
+            inv_distance_power = inv_distance ** power
+            memberships.append(inv_distance_power / np.sum(inv_distance_power))
 
-        return memberships
+        return np.array(memberships)
 
     def get_results(self):
-        """
-        Returns:
-        - membership_matrix.T: np.ndarray, shape [num_clusters, num_pdfs]
-        - centroids: np.ndarray, shape [num_clusters, num_points]
-        """
-        return self.membership_matrix.copy().T, self.centroids.copy(), self.objective_history.copy()
+        """Trả về U.T, centroids, và lịch sử hàm mục tiêu."""
+        return self.membership_matrix.T.copy(), self.centroids.copy(), self.objective_history.copy()
 
-    def get_hard_assignments(self):
-        """
-        Returns:
-        - hard_assignments: np.ndarray, shape [num_pdfs], cluster index per sample
-        """
+    def get_hard_assignments(self) -> np.ndarray:
+        """Trả về nhãn cứng của từng PDF."""
         return np.argmax(self.membership_matrix, axis=1)

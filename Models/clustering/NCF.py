@@ -1,10 +1,32 @@
 import numpy as np
 from utils.dist import Dist
 
+
 class Model:
-    def __init__(self, grid_x, num_clusters=3, m=2, delta=1,
-                 w1=1, w2=1, w3=1, max_iterations=100, tolerance=1e-5,
-                 distance_metric='L2', bandwidth=0.01,seed= None):
+    """
+    Neutrosophic Clustering cho dữ liệu hàm mật độ xác suất (PDF).
+    Bao gồm 3 thành phần: 
+    - T (membership - độ thuộc)
+    - I (indeterminacy - độ không xác định)
+    - F (hesitation - độ do dự)
+    """
+
+    def __init__(
+        self,
+        grid_x: np.ndarray,
+        num_clusters: int = 3,
+        m: float = 2.0,
+        delta: float = 1.0,
+        w1: float = 1.0,
+        w2: float = 1.0,
+        w3: float = 1.0,
+        max_iterations: int = 100,
+        tolerance: float = 1e-5,
+        distance_metric: str = "L2",
+        bandwidth: float = 0.01,
+        seed: int = None,
+        verbose: bool = False,
+    ):
         self.grid_x = grid_x
         self.c = num_clusters
         self.m = m
@@ -14,101 +36,116 @@ class Model:
         self.tolerance = tolerance
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
-        self.eps = 1e-10
         self.seed = seed
+        self.verbose = verbose
+        self.eps = 1e-10
 
-    def _compute_distance(self, f1, f2):
-        dist_obj = Dist(f1, f2, h=self.bandwidth, Dim=1, grid=self.grid_x)
+        self.T, self.I, self.F, self.C = None, None, None, None
+
+    # ===============================
+    # DISTANCE
+    # ===============================
+    def _compute_distance(self, f1: np.ndarray, f2: np.ndarray) -> float:
+        """Tính khoảng cách giữa 2 PDF."""
+        d_obj = Dist(f1, f2, h=self.bandwidth, Dim=1, grid=self.grid_x)
         dist = {
-            'L1': dist_obj.L1(),
-            'L2': dist_obj.L2(),
-            'H': dist_obj.H(),
-            'BC': dist_obj.BC(),
-            'W2': dist_obj.W2()
+            "L1": d_obj.L1(),
+            "L2": d_obj.L2(),
+            "H": d_obj.H(),
+            "BC": d_obj.BC(),
+            "W2": d_obj.W2(),
         }[self.distance_metric]
-        return max(dist, self.eps)  # avoid zero
+        return max(dist, self.eps)
 
-    def fit(self, X, verbose=True):
+    # ===============================
+    # FIT
+    # ===============================
+    def fit(self, X: np.ndarray) -> None:
+        """Huấn luyện mô hình NCF."""
         N, D = X.shape
-        c, m, δ = self.c, self.m, self.delta
+        c, m, delta = self.c, self.m, self.delta
 
-        # Initialize cluster centers
         if self.seed is not None:
             np.random.seed(self.seed)
 
-        C = X[np.random.choice(N, c, replace=False), :]
+        # Khởi tạo
+        C = X[np.random.choice(N, c, replace=False)]
         T = np.full((c, N), 1 / c)
         I = np.full(N, 1 / (c + 2))
         F = np.full(N, 1 / (c + 2))
-
-        pow_exp = -2 / (m - 1)
+        power = -2 / (m - 1)
 
         for iteration in range(self.max_iterations):
             C_prev = C.copy()
 
-            # Step 1: compute c_i_max (average of two closest centers)
+            # Step 1: tính c_i_max (trung bình 2 cụm gần nhất)
             c_i_max = np.zeros((N, D))
+            dist_matrix = np.zeros((N, c))
             for i in range(N):
-                dists = np.array([self._compute_distance(X[i], C[j]) for j in range(c)])
+                dists = [self._compute_distance(X[i], C[j]) for j in range(c)]
+                dist_matrix[i] = dists
                 p, q = np.argsort(dists)[:2]
                 c_i_max[i] = (C[p] + C[q]) / 2
 
-            # Precompute distances with eps clip
-            dist_T = np.zeros((N, c))
-            dist_I = np.zeros(N)
-            for i in range(N):
-                dist_T[i] = np.array([max(self._compute_distance(X[i], C[j]), self.eps) for j in range(c)])
-                dist_I[i] = max(self._compute_distance(X[i], c_i_max[i]), self.eps)
-            dist_F = max(δ, self.eps)
+            # Step 2: tính khoảng cách dist_I
+            dist_I = np.array([self._compute_distance(X[i], c_i_max[i]) for i in range(N)])
+            dist_F = max(delta, self.eps)
 
-            # Step 2: compute K_i
+            # Step 3: tính K_i
             K = 1.0 / (
-                np.sum((1 / self.w1) * dist_T ** pow_exp, axis=1)
-                + (1 / self.w2) * dist_I ** pow_exp
-                + (1 / self.w3) * dist_F ** pow_exp
+                np.sum((1 / self.w1) * dist_matrix ** power, axis=1)
+                + (1 / self.w2) * dist_I ** power
+                + (1 / self.w3) * dist_F ** power
                 + self.eps
             )
 
-            # Step 3: update T, I, F
+            # Step 4: cập nhật T, I, F
             for i in range(N):
-                for j in range(c):
-                    T[j, i] = K[i] / self.w1 * dist_T[i, j] ** pow_exp
-                I[i] = K[i] / self.w2 * dist_I[i] ** pow_exp
-                F[i] = K[i] / self.w3 * dist_F ** pow_exp
+                T[:, i] = K[i] / self.w1 * dist_matrix[i] ** power
+                I[i] = K[i] / self.w2 * dist_I[i] ** power
+                F[i] = K[i] / self.w3 * dist_F ** power
 
-            # Step 4: update C_j
+            # Step 5: cập nhật C_j
             for j in range(c):
                 weights = (self.w1 * T[j]) ** m
-                numerator = np.sum(weights[:, np.newaxis] * X, axis=0)
-                denominator = np.sum(weights) + self.eps
-                C[j] = numerator / denominator
+                C[j] = np.sum(weights[:, None] * X, axis=0) / (np.sum(weights) + self.eps)
 
-            # Step 5: check convergence
-            delta = np.linalg.norm(C - C_prev)
-            if verbose:
-                print(f"Iteration {iteration + 1}, delta = {delta:.6e}")
-            if delta < self.tolerance or np.isnan(delta):
-                if verbose:
+            # Step 6: kiểm tra hội tụ
+            delta_c = np.linalg.norm(C - C_prev)
+            if self.verbose:
+                print(f"Iteration {iteration + 1}, delta = {delta_c:.6e}")
+            if delta_c < self.tolerance or np.isnan(delta_c):
+                if self.verbose:
                     print("Converged or stopped.")
                 break
 
         self.T, self.I, self.F, self.C = T, I, F, C
 
-
-    def get_results(self):
-        return self.T, self.I, self.F, self.C
-
-    def predict(self, new_X):
+    # ===============================
+    # PREDICT
+    # ===============================
+    def predict(self, new_X: np.ndarray) -> np.ndarray:
+        """Dự đoán membership cho dữ liệu mới."""
         if new_X.ndim == 1:
             new_X = new_X[np.newaxis, :]
+
         num_new = new_X.shape[0]
         memberships = np.zeros((self.c, num_new))
+        power = -2 / (self.m - 1)
+
         for i in range(num_new):
             dists = np.array([self._compute_distance(new_X[i], self.C[j]) for j in range(self.c)])
-            sum_T = np.sum([(1 / self.w1) * d ** (-2 / (self.m - 1)) for d in dists])
-            sum_I = (1 / self.w2) * np.min(dists) ** (-2 / (self.m - 1))  # approx c_i_max
-            sum_F = (1 / self.w3) * self.delta ** (-2 / (self.m - 1))
-            K_i = 1 / (sum_T + sum_I + sum_F + self.eps)
-            for j in range(self.c):
-                memberships[j, i] = K_i / self.w1 * dists[j] ** (-2 / (self.m - 1))
+            sum_T = np.sum((1 / self.w1) * dists ** power)
+            sum_I = (1 / self.w2) * np.min(dists) ** power
+            sum_F = (1 / self.w3) * self.delta ** power
+            K_i = 1.0 / (sum_T + sum_I + sum_F + self.eps)
+            memberships[:, i] = K_i / self.w1 * dists ** power
+
         return memberships
+
+    # ===============================
+    # GET RESULTS
+    # ===============================
+    def get_results(self):
+        """Trả về ma trận T, I, F và các centroid C."""
+        return self.T.copy(), self.I.copy(), self.F.copy(), self.C.copy()
