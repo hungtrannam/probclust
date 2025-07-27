@@ -1,7 +1,13 @@
 import numpy as np
 from scipy.optimize import minimize
 
+
 class Model:
+    """
+    SVM với kernel matrix tiền tính (precomputed kernel).
+    Hỗ trợ phân loại nhị phân {0,1}.
+    """
+
     def __init__(self, C=1.0, max_iter=1000, verbose=False):
         self.C = C
         self.max_iter = max_iter
@@ -11,13 +17,22 @@ class Model:
         self.y_train = None
         self.K_train = None
 
+    # ===============================
+    # TRAINING
+    # ===============================
     def fit(self, K, y):
         """
-        K: (n_samples, n_samples), precomputed kernel matrix
-        y: (n_samples,), labels {0,1}
+        Huấn luyện SVM với kernel matrix tiền tính.
+
+        Parameters
+        ----------
+        K : ndarray [n_samples, n_samples]
+            Kernel matrix (symmetric, positive semidefinite).
+        y : ndarray [n_samples]
+            Nhãn {0,1}.
         """
         n_samples = len(y)
-        y_signed = y * 2 - 1  # Convert {0,1} → {-1,1}
+        y_signed = y * 2 - 1  # Chuyển {0,1} thành {-1,1}
         self.y_train = y_signed
         self.K_train = K
 
@@ -47,7 +62,7 @@ class Model:
         sv_mask = self.alpha > 1e-5
         active_sv = np.where((self.alpha > 1e-5) & (self.alpha < self.C - 1e-5))[0]
 
-        # Compute bias (average over non-bound SVs)
+        # Tính bias bằng trung bình trên support vectors không bị chặn
         if len(active_sv) > 0:
             self.bias = np.mean([
                 y_signed[i] - np.sum(self.alpha * y_signed * K[i, :])
@@ -60,21 +75,38 @@ class Model:
             print(f"[SVM] Done. Support vectors: {np.sum(sv_mask)}, Bias: {self.bias:.4f}")
         return self
 
+    # ===============================
+    # DECISION FUNCTION
+    # ===============================
     def decision_function(self, K_new):
         """
-        K_new: (n_samples_train, n_samples_test), kernel between train & test
-        Return: raw decision values (before sign)
+        Tính giá trị decision function trước khi threshold.
+
+        Parameters
+        ----------
+        K_new : ndarray [n_train, n_test]
+            Kernel matrix giữa tập train và test.
+
+        Returns
+        -------
+        ndarray [n_test]
+            Giá trị decision (chưa lấy sign).
         """
         return np.sum((self.alpha * self.y_train)[:, None] * K_new, axis=0) + self.bias
 
-
-    def predict_proba(self, K):
-        decision_values = K @ self.alpha + self.bias
+    # ===============================
+    # PREDICT & PROBA
+    # ===============================
+    def predict_proba(self, K_new):
+        """
+        Tính xác suất ước lượng từ decision function (qua sigmoid).
+        """
+        decision_values = self.decision_function(K_new)
         probs = 1 / (1 + np.exp(-decision_values))
-        return np.vstack([1 - probs, probs]).T 
-    
+        return np.vstack([1 - probs, probs]).T
+
     def predict(self, K_new):
         """
-        Predict class labels {0,1} based on sign of decision_function.
+        Dự đoán nhãn {0,1}.
         """
         return (self.decision_function(K_new) >= 0).astype(int)

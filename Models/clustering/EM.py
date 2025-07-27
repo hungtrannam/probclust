@@ -1,20 +1,42 @@
 import numpy as np
 from utils.dist import Dist
 
-class Model:
-    def __init__(self, grid_x, num_clusters=3, max_iterations=100, tolerance=1e-5,
-                 distance_metric='L2', bandwidth=0.01, seed = None, verbose=False):
-        """
-        EM clustering for probability density functions.
 
-        Parameters:
-        - pdf_matrix: np.ndarray, shape [num_pdfs, num_points]
-        - grid_x: np.ndarray, grid points for distance calculations
-        - num_clusters: int, number of clusters
-        - max_iterations: int, maximum number of EM iterations
-        - tolerance: float, convergence threshold
-        - distance_metric: str, type of distance ('L1', 'L2', 'H', 'BC', 'W2')
-        - bandwidth: float, integration bandwidth parameter
+class Model:
+    """
+    EM clustering cho hàm mật độ xác suất (PDF).
+    """
+
+    def __init__(
+        self,
+        grid_x: np.ndarray,
+        num_clusters: int = 3,
+        max_iterations: int = 100,
+        tolerance: float = 1e-5,
+        distance_metric: str = "L2",
+        bandwidth: float = 0.01,
+        seed: int = None,
+        verbose: bool = False,
+    ):
+        """
+        Parameters
+        ----------
+        grid_x : np.ndarray
+            Lưới x để tính khoảng cách.
+        num_clusters : int
+            Số cụm.
+        max_iterations : int
+            Số vòng lặp tối đa của EM.
+        tolerance : float
+            Ngưỡng hội tụ.
+        distance_metric : str
+            Loại khoảng cách ('L1', 'L2', 'H', 'BC', 'W2').
+        bandwidth : float
+            Tham số bandwidth cho tích phân.
+        seed : int
+            Seed random (nếu cần).
+        verbose : bool
+            In log nếu True.
         """
         self.grid_x = grid_x
         self.num_clusters = num_clusters
@@ -23,62 +45,75 @@ class Model:
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
         self.seed = seed
-        self.verbose=verbose
+        self.verbose = verbose
 
-    def _compute_distance(self, pdf1, pdf2):
+        self.pdf_matrix = None
+        self.centroids = None
+        self.responsibilities = None
+        self.cluster_priors = None
+
+    def _compute_distance(self, pdf1: np.ndarray, pdf2: np.ndarray) -> float:
+        """Tính khoảng cách giữa 2 PDF."""
         dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
         distance_map = {
-            'L1': dist_obj.L1(),
-            'L2': dist_obj.L2(),
-            'H': dist_obj.H(),
-            'BC': dist_obj.BC(),
-            'W2': dist_obj.W2()
+            "L1": dist_obj.L1(),
+            "L2": dist_obj.L2(),
+            "H": dist_obj.H(),
+            "BC": dist_obj.BC(),
+            "W2": dist_obj.W2(),
         }
-        return distance_map.get(self.distance_metric, None)
+        return distance_map[self.distance_metric]
 
-    def fit(self, pdf_matrix, verbose=True):
+    def _update_centroids(self) -> None:
+        """Cập nhật centroid dựa trên responsibilities."""
+        for j in range(self.num_clusters):
+            weights = self.responsibilities[:, j]
+            numerator = np.sum(weights[:, np.newaxis] * self.pdf_matrix, axis=0)
+            denominator = np.sum(weights) + 1e-12
+            self.centroids[j, :] = numerator / denominator
 
-        self.pdf_matrix= pdf_matrix
-        self.num_pdfs, self.num_points = pdf_matrix.shape
+    def _update_cluster_priors(self) -> None:
+        """Cập nhật trọng số cụm (priors)."""
+        self.cluster_priors = np.sum(self.responsibilities, axis=0) / self.pdf_matrix.shape[0]
 
-        # Initialize soft responsibility matrix (gamma): [num_pdfs, num_clusters]
+    def _e_step(self) -> np.ndarray:
+        """Bước E: Tính responsibilities mới."""
+        distance_matrix = np.array([
+            [self._compute_distance(self.pdf_matrix[i], self.centroids[j]) + 1e-10
+             for j in range(self.num_clusters)]
+            for i in range(self.pdf_matrix.shape[0])
+        ])
+        new_responsibilities = np.exp(-distance_matrix) * self.cluster_priors[np.newaxis, :]
+        new_responsibilities /= np.sum(new_responsibilities, axis=1, keepdims=True)
+        return new_responsibilities
+
+    def fit(self, pdf_matrix: np.ndarray) -> None:
+        """Huấn luyện EM."""
+        self.pdf_matrix = pdf_matrix
+        num_pdfs, num_points = pdf_matrix.shape
+
         if self.seed is not None:
             np.random.seed(self.seed)
 
-        self.responsibilities = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
+        # Khởi tạo responsibilities
+        self.responsibilities = np.random.dirichlet(np.ones(self.num_clusters), size=num_pdfs)
 
-        # Initialize cluster prototypes (centroids): [num_clusters, num_points]
-        self.centroids = np.zeros((self.num_clusters, self.num_points))
-        init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
-        for j, idx in enumerate(init_indices):
-            self.centroids[j, :] = self.pdf_matrix[idx, :]
+        # Khởi tạo centroids từ dữ liệu
+        init_indices = np.random.choice(num_pdfs, self.num_clusters, replace=False)
+        self.centroids = pdf_matrix[init_indices, :].copy()
 
-        # Initialize cluster priors (weights)
+        # Khởi tạo cluster priors
         self.cluster_priors = np.ones(self.num_clusters) / self.num_clusters
 
         for iteration in range(self.max_iterations):
-            # M-step: update centroids (prototypes)
-            for j in range(self.num_clusters):
-                weights = self.responsibilities[:, j]  # [num_pdfs]
-                numerator = np.sum(weights[:, np.newaxis] * self.pdf_matrix, axis=0)  # [num_points]
-                denominator = np.sum(weights)
-                self.centroids[j, :] = numerator / (denominator + 1e-10)
+            # M-step
+            self._update_centroids()
+            self._update_cluster_priors()
 
-            # M-step: update cluster priors (weights)
-            self.cluster_priors = np.sum(self.responsibilities, axis=0) / self.num_pdfs
+            # E-step
+            new_responsibilities = self._e_step()
 
-            # E-step: compute distances
-            distance_matrix = np.array([
-                [self._compute_distance(self.pdf_matrix[i, :], self.centroids[j, :]) + 1e-10
-                 for j in range(self.num_clusters)]
-                for i in range(self.num_pdfs)
-            ])  # [num_pdfs, num_clusters]
-
-            # E-step: update responsibilities (soft assignments)
-            new_responsibilities = np.exp(-distance_matrix) * self.cluster_priors[np.newaxis, :]  # [num_pdfs, num_clusters]
-            new_responsibilities /= np.sum(new_responsibilities, axis=1, keepdims=True)
-
-            # Check convergence
+            # Kiểm tra hội tụ
             delta = np.linalg.norm(new_responsibilities - self.responsibilities)
             if self.verbose:
                 print(f"Iteration {iteration + 1}, delta = {delta:.6f}")
@@ -88,44 +123,27 @@ class Model:
                 break
             self.responsibilities = new_responsibilities
 
-    def predict(self, new_pdfs):
-        """
-        Predict soft cluster assignments for new pdfs.
-
-        Parameters:
-        - new_pdfs: np.ndarray, shape [num_new_pdfs, num_points]
-
-        Returns:
-        - soft_assignments: np.ndarray, shape [num_new_pdfs, num_clusters]
-        """
+    def predict(self, new_pdfs: np.ndarray) -> np.ndarray:
+        """Dự đoán soft-assignments cho PDF mới."""
         if new_pdfs.ndim == 1:
-            new_pdfs = new_pdfs[np.newaxis, :]  # [1, num_points]
-        num_new = new_pdfs.shape[0]
-        soft_assignments = np.zeros((num_new, self.num_clusters))
+            new_pdfs = new_pdfs[np.newaxis, :]
 
-        for idx in range(num_new):
+        assignments = []
+        for pdf in new_pdfs:
             distances = np.array([
-                self._compute_distance(new_pdfs[idx, :], self.centroids[j, :]) + 1e-10
+                self._compute_distance(pdf, self.centroids[j]) + 1e-10
                 for j in range(self.num_clusters)
             ])
             probabilities = self.cluster_priors * np.exp(-distances)
             probabilities /= np.sum(probabilities)
-            soft_assignments[idx, :] = probabilities
+            assignments.append(probabilities)
 
-        return soft_assignments
+        return np.array(assignments)
 
     def get_results(self):
-        """
-        Returns:
-        - responsibilities.T: np.ndarray, shape [num_clusters, num_pdfs]
-        - centroids: np.ndarray, shape [num_clusters, num_points]
-        - cluster_priors: np.ndarray, shape [num_clusters,]
-        """
-        return self.responsibilities.copy().T, self.centroids.copy(), self.cluster_priors.copy()
+        """Trả về responsibilities, centroids, cluster_priors."""
+        return self.responsibilities.T.copy(), self.centroids.copy(), self.cluster_priors.copy()
 
-    def get_hard_assignments(self):
-        """
-        Returns:
-        - hard_assignments: np.ndarray, shape [num_pdfs], cluster index per sample
-        """
+    def get_hard_assignments(self) -> np.ndarray:
+        """Trả về nhãn cứng cho từng PDF."""
         return np.argmax(self.responsibilities, axis=1)

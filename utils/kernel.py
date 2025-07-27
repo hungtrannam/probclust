@@ -1,52 +1,87 @@
 import numpy as np
 from utils.integral import int_trapz
 
-class kernel:
-    def __init__(self, h, Dim=None):
+
+class Kernel:
+    """
+    Kernel matrix computation for PDFs using different metrics (Hellinger, L1, L2).
+    """
+
+    def __init__(self, h: float, Dim: int = None):
         self.h = h
         self.Dim = Dim
 
-    def H(self, pdfs):
+    def _compute_pairwise(self, pdfs, metric_fn):
+        """
+        Tính toán ma trận kernel đôi một với hàm metric cho trước.
+        """
         n = pdfs.shape[0]
         K = np.zeros((n, n))
         for i in range(n):
             for j in range(i, n):
-                sqrt_prod = np.sqrt(pdfs[i] * pdfs[j])
-                K_val = int_trapz(sqrt_prod, self.h, Dim=self.Dim)
-                K[i, j] = K_val
-                K[j, i] = K_val
+                val = metric_fn(pdfs[i], pdfs[j])
+                K[i, j] = val
+                K[j, i] = val
         return K
 
-    def L2(self, pdfs, gamma=1):
-        n = pdfs.shape[0]
-        K = np.zeros((n, n))
-        for i in range(n):
-            for j in range(i, n):
-                diff_sq = (pdfs[i] - pdfs[j]) ** 2
-                dist = int_trapz(diff_sq, self.h, Dim=self.Dim)
-                K_val = np.exp(-gamma * dist)
-                K[i, j] = K_val
-                K[j, i] = K_val
-        return K
-        
-    def L1(self, pdfs, gamma=1.0):
-        n = pdfs.shape[0]
-        K = np.zeros((n, n))
-        for i in range(n):
-            for j in range(i, n):
-                abs_diff = np.abs(pdfs[i] - pdfs[j])
-                dist = int_trapz(abs_diff, self.h, Dim=self.Dim)
-                K_val = np.exp(-gamma * dist)
-                K[i, j] = K_val
-                K[j, i] = K_val
-        return K
-    
-    def compute(self, pdfs, kind='H', gamma=1.0, c=1.0, degree=2):
-        if kind == 'H':
+    def H(self, pdfs: np.ndarray) -> np.ndarray:
+        """
+        Hellinger kernel matrix.
+        K(i, j) = ∫ sqrt(pdf_i * pdf_j)
+        """
+        return self._compute_pairwise(
+            pdfs,
+            lambda f1, f2: int_trapz(np.sqrt(f1 * f2), self.h, Dim=self.Dim),
+        )
+
+    def L2(self, pdfs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+        """
+        Gaussian-like kernel using L2 distance.
+        K(i, j) = exp(-gamma * ∫ (f1 - f2)^2)
+        """
+        return self._compute_pairwise(
+            pdfs,
+            lambda f1, f2: np.exp(
+                -gamma * int_trapz((f1 - f2) ** 2, self.h, Dim=self.Dim)
+            ),
+        )
+
+    def L1(self, pdfs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+        """
+        Exponential kernel using L1 distance.
+        K(i, j) = exp(-gamma * ∫ |f1 - f2|)
+        """
+        return self._compute_pairwise(
+            pdfs,
+            lambda f1, f2: np.exp(
+                -gamma * int_trapz(np.abs(f1 - f2), self.h, Dim=self.Dim)
+            ),
+        )
+
+    def compute(self, pdfs: np.ndarray, kind: str = "H", gamma: float = 1.0) -> np.ndarray:
+        """
+        General interface to compute kernel matrix.
+
+        Parameters
+        ----------
+        pdfs : np.ndarray
+            Matrix of PDFs [n_pdfs, n_points].
+        kind : str
+            Kernel type: 'H', 'L2', 'L1'.
+        gamma : float
+            Kernel parameter for L1/L2.
+
+        Returns
+        -------
+        np.ndarray
+            Kernel matrix [n_pdfs, n_pdfs].
+        """
+        kind = kind.upper()
+        if kind == "H":
             return self.H(pdfs)
-        elif kind == 'L2':
+        elif kind == "L2":
             return self.L2(pdfs, gamma)
-        elif kind == 'L1':
-            return self.L1(pdfs)
+        elif kind == "L1":
+            return self.L1(pdfs, gamma)
         else:
             raise ValueError(f"Unknown kernel kind: {kind}")

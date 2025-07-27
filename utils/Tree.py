@@ -176,7 +176,7 @@ class TreePDF:
                         max_iterations=100, tolerance=1e-5,
                         distance_metric=self.distance_metric,
                         bandwidth=self.bandwidth, seed=self.random_state)
-            kmeans.fit(x_data, verbose=self.verbose > 0)
+            kmeans.fit(x_data)
             y = kmeans.get_hard_assignments()
             self.all_centers = kmeans.centroids
         else:

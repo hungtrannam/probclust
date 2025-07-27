@@ -1,12 +1,25 @@
 import numpy as np
 from utils.dist import Dist
 
+
 class Model:
-    def __init__(self, grid_x, num_clusters=3, fuzziness=2, max_iterations=100,
-                 tolerance=1e-5, kernel_type='L2', gamma=1.0, bandwidth=0.01, seed= None, verbose=False):
-        """
-        Kernel Fuzzy C-Means clustering for probability density functions.
-        """
+    """
+    Kernel Fuzzy C-Means clustering cho hàm mật độ xác suất (PDF).
+    """
+
+    def __init__(
+        self,
+        grid_x: np.ndarray,
+        num_clusters: int = 3,
+        fuzziness: float = 2.0,
+        max_iterations: int = 100,
+        tolerance: float = 1e-5,
+        kernel_type: str = "L2",
+        gamma: float = 1.0,
+        bandwidth: float = 0.01,
+        seed: int = None,
+        verbose: bool = False,
+    ):
         self.grid_x = grid_x
         self.num_clusters = num_clusters
         self.fuzziness = fuzziness
@@ -15,144 +28,137 @@ class Model:
         self.kernel_type = kernel_type
         self.gamma = gamma
         self.bandwidth = bandwidth
-        self.seed= seed
+        self.seed = seed
         self.verbose = verbose
 
-    def _kernel_function(self, pdf1, pdf2):
-        dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
-        if self.kernel_type == 'L1':
-            l1 = dist_obj.L1()
-            return np.exp(-self.gamma * l1 ** 2)
-        elif self.kernel_type == 'L2':
-            l2 = dist_obj.L2()
-            return np.exp(-self.gamma * l2 ** 2)
-        elif self.kernel_type == 'BC':
-            return np.exp(-dist_obj.BC())
+        self.pdf_matrix = None
+        self.membership_matrix = None
+        self.centroids = None
+        self.kernel_matrix = None
+        self.objective_history = []
+
+    # ===============================
+    # KERNEL FUNCTION
+    # ===============================
+    def _kernel_function(self, pdf1: np.ndarray, pdf2: np.ndarray) -> float:
+        """Hàm kernel dựa trên khoảng cách."""
+        d_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
+        if self.kernel_type == "L1":
+            return np.exp(-self.gamma * d_obj.L1() ** 2)
+        elif self.kernel_type == "L2":
+            return np.exp(-self.gamma * d_obj.L2() ** 2)
+        elif self.kernel_type == "BC":
+            return np.exp(-d_obj.BC())
         else:
             raise ValueError(f"Unsupported kernel type: {self.kernel_type}")
 
-    def _compute_kernel_matrix(self):
+    def _compute_kernel_matrix(self) -> np.ndarray:
+        """Tính ma trận kernel giữa các PDF."""
         K = np.zeros((self.num_pdfs, self.num_pdfs))
         for i in range(self.num_pdfs):
             for j in range(i, self.num_pdfs):
-                K_val = self._kernel_function(self.pdf_matrix[i], self.pdf_matrix[j])
-                K[i, j] = K[j, i] = K_val
+                val = self._kernel_function(self.pdf_matrix[i], self.pdf_matrix[j])
+                K[i, j] = K[j, i] = val
         return K
 
-    def fit(self, pdf_matrix, verbose=True):
+    # ===============================
+    # FIT
+    # ===============================
+    def fit(self, pdf_matrix: np.ndarray) -> None:
         self.pdf_matrix = pdf_matrix
-        self.num_pdfs = self.pdf_matrix.shape[0]
+        self.num_pdfs = pdf_matrix.shape[0]
+
         if self.seed is not None:
             np.random.seed(self.seed)
 
-        self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)  # [num_pdfs, num_clusters]
+        # Khởi tạo membership matrix U
+        self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
 
-        # Initialize cluster centroids (prototypes) as random pdfs
-        initial_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
-        self.centroids = self.pdf_matrix[initial_indices]  # [num_clusters, num_points]
+        # Khởi tạo centroids
+        init_idx = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
+        self.centroids = pdf_matrix[init_idx]
 
-        # Precompute kernel matrix
+        # Tiền tính kernel matrix
         self.kernel_matrix = self._compute_kernel_matrix()
-        
-        eps_small = 1e-100
 
-        self.objective_history = []
+        eps = 1e-100
+        self.objective_history.clear()
+
         for iteration in range(self.max_iterations):
-            previous_U = self.membership_matrix.copy()
+            U_prev = self.membership_matrix.copy()
 
-            # Step 1: Compute K(x_k, v_j)
+            # Step 1: Tính kernel đến centroids
             kernel_to_centroids = np.zeros((self.num_pdfs, self.num_clusters))
             for i in range(self.num_pdfs):
                 for j in range(self.num_clusters):
                     kernel_to_centroids[i, j] = self._kernel_function(self.pdf_matrix[i], self.centroids[j])
 
-            # Step 2: Update membership matrix U
-            if self.kernel_type == 'BC':
-                distances = 1-kernel_to_centroids
+            # Step 2: Cập nhật membership matrix
+            if self.kernel_type == "BC":
+                distances = 1 - kernel_to_centroids
             else:
                 distances = np.sqrt(2 * (1 - kernel_to_centroids))
-            
-            for k in range(self.num_pdfs):
-                denom = np.sum((distances[k, :] + eps_small) ** (-1 / (self.fuzziness - 1)))
-                for j in range(self.num_clusters):
-                    self.membership_matrix[k, j] = (distances[k, j] + eps_small) ** (-1 / (self.fuzziness - 1)) / denom
 
-            # Step 3: Update centroids
+            power = -1 / (self.fuzziness - 1)
+            for i in range(self.num_pdfs):
+                inv_dist = (distances[i] + eps) ** power
+                self.membership_matrix[i] = inv_dist / np.sum(inv_dist)
+
+            # Step 3: Cập nhật centroids
             for j in range(self.num_clusters):
-                weights_m = self.membership_matrix[:, j] ** self.fuzziness
-                weights_kernel = weights_m * kernel_to_centroids[:, j]
-                numerator = np.sum(weights_kernel[:, None] * self.pdf_matrix, axis=0)
-                denominator = np.sum(weights_kernel) + eps_small
-                self.centroids[j] = numerator / denominator
+                weights = self.membership_matrix[:, j] ** self.fuzziness
+                weighted_kernel = weights * kernel_to_centroids[:, j]
+                numerator = np.sum(weighted_kernel[:, None] * self.pdf_matrix, axis=0)
+                self.centroids[j] = numerator / (np.sum(weighted_kernel) + eps)
 
-            # Check convergence
-            delta = np.linalg.norm(self.membership_matrix - previous_U)
-
-
-            if self.kernel_type == 'BC':
-                distances = 1-kernel_to_centroids
-            else:
-                distances = np.sqrt(2 * (1 - kernel_to_centroids))
-
+            # Step 4: Tính hàm mục tiêu và kiểm tra hội tụ
             self.objective_value = np.sum((self.membership_matrix ** self.fuzziness) * distances)
-            self.objective_history.append(self.objective_value) 
+            self.objective_history.append(self.objective_value)
 
-
+            delta = np.linalg.norm(self.membership_matrix - U_prev)
             if self.verbose:
-                print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {self.objective_value:.6f}")    
+                print(f"Iteration {iteration + 1}, delta = {delta:.6f}, objective = {self.objective_value:.6f}")
             if delta < self.tolerance:
                 if self.verbose:
                     print("Converged.")
                 break
 
+    # ===============================
+    # PREDICT
+    # ===============================
+    def predict(self, new_pdfs: np.ndarray) -> np.ndarray:
+        """Dự đoán membership cho các PDF mới."""
+        if new_pdfs.ndim == 1:
+            new_pdfs = new_pdfs[np.newaxis, :]
 
-    def predict(self, new_pdfs):
-        """
-        Predict fuzzy membership for new pdf(s).
+        memberships = []
+        eps = 1e-100
+        power = -1 / (self.fuzziness - 1)
 
-        Parameters:
-        - new_pdfs: np.ndarray, shape [num_points,] or [num_points, num_new_pdfs]
-
-        Returns:
-        - memberships: np.ndarray, shape [num_new_pdfs, num_clusters]
-        """
-        if new_pdfs.shape[1] == 1:
-            new_pdfs = new_pdfs.T
-        num_new = new_pdfs.shape[0]
-        memberships = np.zeros((num_new, self.num_clusters))
-        eps_small = 1e-100
-
-        for i in range(num_new):
-            # Compute kernel between f_new[i] and all pdfs
-            kernel_to_pdfs = np.array([self._kernel_function(new_pdfs[i], self.pdf_matrix[k]) for k in range(self.num_pdfs)])
-
-            # Compute kernel between f_new[i] and each cluster centroid
+        for pdf in new_pdfs:
+            kernel_to_pdfs = np.array([self._kernel_function(pdf, self.pdf_matrix[i]) for i in range(self.num_pdfs)])
             kernel_to_centroids = np.zeros(self.num_clusters)
             for j in range(self.num_clusters):
                 weights = self.membership_matrix[:, j] ** self.fuzziness
-                kernel_to_centroids[j] = np.sum(weights * kernel_to_pdfs) / (np.sum(weights) + eps_small)
+                kernel_to_centroids[j] = np.sum(weights * kernel_to_pdfs) / (np.sum(weights) + eps)
 
-            # Compute distance and fuzzy membership
-            if self.kernel_type == 'BC':
-                distances = kernel_to_centroids
+            if self.kernel_type == "BC":
+                distances = 1 - kernel_to_centroids
             else:
                 distances = np.sqrt(2 * (1 - kernel_to_centroids))
-            denom = np.sum(distances ** (-1 / (self.fuzziness - 1)))
-            memberships[i, :] = (distances ** (-1 / (self.fuzziness - 1))) / denom
 
-        return memberships
+            inv_dist = distances ** power
+            memberships.append(inv_dist / np.sum(inv_dist))
 
+        return np.array(memberships)
+
+    # ===============================
+    # GET RESULTS
+    # ===============================
     def get_results(self):
-        """
-        Returns:
-        - partition_matrix: np.ndarray [num_clusters, num_pdfs] (one-hot transposed)
-        - centroids: np.ndarray [num_clusters, num_points]
-        """
-        return self.membership_matrix.copy().T, self.centroids.copy(),  self.objective_history.copy()
+        """Trả về (U.T, centroids, objective_history)."""
+        return self.membership_matrix.T.copy(), self.centroids.copy(), self.objective_history.copy()
 
     def get_hard_assignments(self):
-        """
-        Returns:
-        - hard_assignments: np.ndarray, shape [num_pdfs], cluster index per sample
-        """
+        """Trả về nhãn cứng cho mỗi PDF."""
         return np.argmax(self.membership_matrix, axis=1)

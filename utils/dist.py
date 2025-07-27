@@ -101,3 +101,15 @@ class Dist:
         
         # Overlap is defined as the integral of the minimum of the two distributions
         return 1-int_trapz(np.minimum(self.f1, self.f2), Dim=self.Dim, h=self.h)
+    
+
+    @staticmethod
+    def compute_all(F_data: np.ndarray, centers: np.ndarray, metric: str, bandwidth: float) -> np.ndarray:
+        """Tính toàn bộ ma trận khoảng cách F_data vs centers."""
+        n_samples = F_data.shape[0]
+        n_centers = centers.shape[0]
+        dist_matrix = np.zeros((n_samples, n_centers))
+        for i in range(n_samples):
+            for j in range(n_centers):
+                dist_matrix[i, j] = Dist.compute(F_data[i], centers[j], metric, bandwidth)
+        return dist_matrix
