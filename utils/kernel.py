@@ -46,7 +46,8 @@ class Kernel:
             ),
         )
 
-    def L1(self, pdfs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+
+    def L1(self, pdfs: np.ndarray, gamma: float = 2.0) -> np.ndarray:
         """
         Exponential kernel using L1 distance.
         K(i, j) = exp(-gamma * ∫ |f1 - f2|)
