@@ -16,6 +16,7 @@ class Model:
         tolerance: float = 1e-5,
         distance_metric: str = "L2",
         bandwidth: float = 0.01,
+        Dim=None,
         seed: int = None,
         verbose: bool = False,
     ):
@@ -50,6 +51,8 @@ class Model:
         self.bandwidth = bandwidth
         self.seed = seed
         self.verbose = verbose
+        self.Dim = Dim if Dim is not None else 1
+
 
         self.pdf_matrix = None
         self.centroids = None
@@ -58,7 +61,7 @@ class Model:
 
     def _compute_distance(self, pdf1: np.ndarray, pdf2: np.ndarray) -> float:
         """Tính khoảng cách giữa 2 PDF."""
-        dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
+        dist_obj = Dist(pdf1, pdf2, h=self.bandwidth,Dim=self.Dim, grid=self.grid_x)
         distance_map = {
             "L1": dist_obj.L1(),
             "L2": dist_obj.L2(),

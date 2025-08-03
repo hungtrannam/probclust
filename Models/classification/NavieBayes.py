@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.integrate import trapezoid
 import matplotlib.pyplot as plt
+import os
 
 class Model:
     """
@@ -81,7 +82,7 @@ class Model:
         idx = np.argmax(proba, axis=1)
         return self.classes_[idx]
 
-    def explain(self, h, plot=True, priors=None):
+    def explain(self, h, priors=None, savefile=False):
         """
         Giải thích quyết định phân loại cho một PDF h.
         Hiển thị cả likelihood và posterior (có tính đến prior).
@@ -103,24 +104,24 @@ class Model:
         total = sum(scores.values())
         posterior = {c: scores[c] / total for c in self.classes_}
 
-        if plot:
+        if savefile:
             from utils.vis import temp
             plt.figure(figsize=(6, 5))
             temp(20)
 
             # Vẽ PDF cần phân loại
             plt.plot(
-                self.x_grid, h, label="Test h(x)",
+                self.x_grid, h, label=r"$h(x)$",
                 color="black", linewidth=3, linestyle="-"
             )
 
             # Kiểu màu cho từng class
-            gray_styles = [("black", "--"), ("gray", "--")]
+            gray_styles = [("black", ":"), ("gray", "--")]
 
             # Vẽ PDF trung bình cho từng lớp
             for idx, c in enumerate(self.classes_):
                 color, style = gray_styles[idx % len(gray_styles)]
-                label_text = f"Class {c} (prior={class_priors[c]:.2f})"
+                label_text = f"Class {c} (prior = {class_priors[c]:.2f})"
                 plt.plot(
                     self.x_grid,
                     self.class_mean_pdf_[c],
@@ -135,8 +136,13 @@ class Model:
                 )
 
             plt.legend(fontsize=13)
+            
             plt.tight_layout()
-            plt.show()
+            os.makedirs(os.path.dirname(savefile), exist_ok=True)
+            plt.savefig(savefile, bbox_inches='tight', dpi=300)
+            print(f"Saved plot to {savefile}")
+            plt.close()
+
 
         return {"likelihood": likelihoods, "posterior": posterior}
 
