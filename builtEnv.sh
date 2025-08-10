@@ -43,7 +43,8 @@ pip install --no-cache-dir \
     gpustat statsmodels gputil \
     shap ipykernel\
     opencv-python\
-    scikit-image
+    scikit-image\
+    pyvis
 
 
 ############## Save environment ##############
