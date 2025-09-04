@@ -66,7 +66,7 @@ def generateUniform(a_list, b_list, grid, savefile=None):
         pdf = uniform.pdf(grid, loc=a, scale=width)
         pdfs.append(pdf)
 
-    pdfs = np.array(pdfs).T  # shape: (len(grid), n_pdfs)
+    pdfs = np.array(pdfs)  # shape: (len(grid), n_pdfs)
 
     if savefile:
         os.makedirs('dataset', exist_ok=True)

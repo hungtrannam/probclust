@@ -66,8 +66,22 @@ class Kernel:
         """
         return self._compute_pairwise(
             pdfs,
-            lambda f1, f2: int_trapz(f1*f2, self.h, Dim=self.Dim)
+            lambda f1, f2: int_trapz(
+               f1*f2, self.h, Dim=self.Dim
+            ),
         ),
+
+    def Chi2(self, pdfs: np.ndarray, eps: float = 1e-10) -> np.ndarray:
+        """
+        Chi-squared kernel matrix.
+        K(i, j) = ∫ 2 * f1 * f2 / (f1 + f2 + eps) dx
+        """
+        return self._compute_pairwise(
+            pdfs,
+            lambda f1, f2: int_trapz(
+                2 * f1 * f2 / (f1 + f2 + eps), self.h, Dim=self.Dim
+            ),
+        )
 
     def compute(self, pdfs: np.ndarray, kind: str = "H", gamma: float = 1.0) -> np.ndarray:
         """
