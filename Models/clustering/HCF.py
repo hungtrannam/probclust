@@ -49,8 +49,8 @@ class Model:
         dist_matrix = np.zeros((n_pdfs, n_pdfs))
         for i in range(n_pdfs):
             for j in range(i + 1, n_pdfs):
-                d_obj = Dist(pdf_matrix[i], pdf_matrix[j], h=self.bandwidth, Dim=1, grid=self.grid_x)
-                dist_matrix[i, j] = dist_matrix[j, i] = getattr(d_obj, self.distance_metric)()
+                d_obj = Dist(h=self.bandwidth, Dim=1, grid=self.grid_x)
+                dist_matrix[i, j] = dist_matrix[j, i] = getattr(d_obj, self.distance_metric)(pdf_matrix[i], pdf_matrix[j])
         return dist_matrix
 
     def _calculate_linkage_distance(
@@ -69,8 +69,8 @@ class Model:
         elif self.linkage in ["centroid", "ward"]:
             centroid_a = np.mean(pdf_matrix[cluster_a], axis=0)
             centroid_b = np.mean(pdf_matrix[cluster_b], axis=0)
-            d_obj = Dist(centroid_a, centroid_b, h=self.bandwidth, Dim=1, grid=self.grid_x)
-            centroid_dist = getattr(d_obj, self.distance_metric)()
+            d_obj = Dist(h=self.bandwidth, Dim=1, grid=self.grid_x)
+            centroid_dist = getattr(d_obj, self.distance_metric)(centroid_a, centroid_b)
             if self.linkage == "ward":
                 size_a, size_b = len(cluster_a), len(cluster_b)
                 return (size_a * size_b) / (size_a + size_b) * centroid_dist ** 2

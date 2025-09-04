@@ -45,8 +45,7 @@ class Kernel:
                 -gamma * int_trapz((f1 - f2) ** 2, self.h, Dim=self.Dim)
             ),
         )
-
-
+    
     def L1(self, pdfs: np.ndarray, gamma: float = 2.0) -> np.ndarray:
         """
         Exponential kernel using L1 distance.
@@ -58,6 +57,17 @@ class Kernel:
                 -gamma * int_trapz(np.abs(f1 - f2), self.h, Dim=self.Dim)
             ),
         )
+
+
+    def LN(self, pdfs: np.ndarray) -> np.ndarray:
+        """
+        Exponential kernel using L1 distance.
+        K(i, j) = exp(-gamma * ∫ |f1 - f2|)
+        """
+        return self._compute_pairwise(
+            pdfs,
+            lambda f1, f2: int_trapz(f1*f2, self.h, Dim=self.Dim)
+        ),
 
     def compute(self, pdfs: np.ndarray, kind: str = "H", gamma: float = 1.0) -> np.ndarray:
         """

@@ -16,6 +16,7 @@ class Model:
         tolerance: float = 1e-5,
         distance_metric: str = "L2",
         bandwidth: float = 0.01,
+        centroid_mode: str = "mean",
         Dim=None,
         seed: int = None,
         verbose: bool = False,
@@ -50,6 +51,7 @@ class Model:
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
         self.seed = seed
+        self.centroids_mode = centroid_mode
         self.verbose = verbose
         self.Dim = Dim if Dim is not None else 1
 
@@ -59,28 +61,83 @@ class Model:
         self.membership_matrix = None
         self.objective_history = []
 
-    def _compute_distance(self, pdf1: np.ndarray, pdf2: np.ndarray) -> float:
-        """Tính khoảng cách giữa 2 PDF."""
-        dist_obj = Dist(pdf1, pdf2, h=self.bandwidth,Dim=self.Dim, grid=self.grid_x)
-        distance_map = {
-            "L1": dist_obj.L1(),
-            "L2": dist_obj.L2(),
-            "H": dist_obj.H(),
-            "BC": dist_obj.BC(),
-            "W2": dist_obj.W2(),
-        }
-        return distance_map[self.distance_metric]
+    @staticmethod
+    def _cdf_from_pdf(pdf: np.ndarray, dx: float) -> np.ndarray:
+        cdf = np.cumsum(pdf) * dx
+        Z = float(cdf[-1]) if cdf.size else 1.0
+        if Z <= 0:
+            n = pdf.size
+            return np.linspace(0.0, 1.0, n)
+        return cdf / Z
+
+    @staticmethod
+    def _normalize_pdf(pdf: np.ndarray, dx: float) -> np.ndarray:
+        Z = float(np.sum(pdf) * dx)
+        return pdf / (Z + 1e-12)
+
+
+    def _update_centroids_w2(self) -> None:
+        """
+        Cập nhật tâm cụm bằng Wasserstein-2 barycenter (1D).
+        - Dựa trên tính chất: Q_k(t) = sum_j w_jk * Q_j(t), với w_jk = U_jk^m / sum_j U_jk^m.
+        - Sau đó suy ra CDF F_k(x) = Q_k^{-1}(x) bằng nội suy ngược, rồi pdf = dF/dx.
+        """
+        assert self.Dim == 1, "W2 barycenter hiện cài cho 1D."
+        assert self.pdf_matrix is not None and self.membership_matrix is not None
+
+        dx = float(self.grid_x[1] - self.grid_x[0])
+        n_samples, m = self.pdf_matrix.shape
+        K = self.num_clusters
+
+        # 1) Tiền tính các inverse-CDF (quantile) cho MỌI pdf một lần
+        t_grid = np.linspace(0.0, 1.0, m)
+        inv_mat = np.empty((n_samples, m), dtype=float)  # inv_mat[j, :] = Q_j(t_grid)
+
+        for j in range(n_samples):
+            cdf_j = self._cdf_from_pdf(self.pdf_matrix[j], dx)
+            # nội suy Q_j(t) = F_j^{-1}(t) trên grid t_grid
+            inv_mat[j] = np.interp(t_grid, cdf_j, self.grid_x)
+
+        # 2) Trọng số mờ cho từng cụm
+        W = self.membership_matrix ** self.fuzziness          # [n_samples, K]
+        denom = np.sum(W, axis=0, keepdims=True) + 1e-12      # [1, K]
+        W_norm = W / denom                                    # chuẩn hoá theo cột
+
+        # 3) Với mỗi cụm: Q_k(t) = Σ_j w_jk * Q_j(t)
+        centroids = np.empty((K, m), dtype=float)
+        for k in range(K):
+            Qk = (W_norm[:, k][:, None] * inv_mat).sum(axis=0)  # [m]
+
+            # đảm bảo đơn điệu không giảm (tránh nhiễu số)
+            Qk = np.maximum.accumulate(Qk)
+
+            # 4) Suy ra CDF tâm: F_k(x) = Q_k^{-1}(x) (nội suy ngược)
+            Fk = np.interp(self.grid_x, Qk, t_grid, left=0.0, right=1.0)
+
+            # 5) pdf tâm = dF/dx (đạo hàm rời rạc trên lưới)
+            fk = np.gradient(Fk, self.grid_x)
+            fk = np.clip(fk, 0.0, None)          # tránh âm do nhiễu số
+            fk = self._normalize_pdf(fk, dx)          # chuẩn hoá
+
+            centroids[k] = fk
+
+        self.centroids = centroids
+
 
     def _update_centroids(self) -> None:
         """Cập nhật tâm cụm (centroid)."""
         weights = self.membership_matrix ** self.fuzziness
         self.centroids = (weights.T @ self.pdf_matrix) / (np.sum(weights.T, axis=1, keepdims=True) + 1e-12)
 
+        
+
     def _compute_distance_matrix(self) -> np.ndarray:
         """Tính ma trận khoảng cách [num_pdfs, num_clusters]."""
+        d_obj = Dist(h=self.bandwidth, Dim=1, grid=self.grid_x)
+
         num_pdfs = self.pdf_matrix.shape[0]
         return np.array([
-            [self._compute_distance(self.pdf_matrix[i], self.centroids[j]) + 1e-10
+            [getattr(d_obj, self.distance_metric)(self.pdf_matrix[i], self.centroids[j]) + 1e-10
              for j in range(self.num_clusters)]
             for i in range(num_pdfs)
         ])
@@ -110,7 +167,11 @@ class Model:
         self.objective_history.clear()
 
         for it in range(self.max_iterations):
-            self._update_centroids()
+            if self.centroids_mode == "mean":
+                self._update_centroids()   
+            elif self.centroids_mode == "frechet":
+                self._update_centroids_w2()   
+                
             dist_matrix = self._compute_distance_matrix()
             new_U = self._update_membership_matrix(dist_matrix)
 
@@ -154,3 +215,5 @@ class Model:
     def get_hard_assignments(self) -> np.ndarray:
         """Trả về nhãn cứng của từng PDF."""
         return np.argmax(self.membership_matrix, axis=1)
+
+

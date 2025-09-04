@@ -7,7 +7,7 @@ class Dist:
     Supports both 1D and 2D (flattened) PDFs.
     """
 
-    def __init__(self, f1, f2, Dim=1, h=None, grid=None):
+    def __init__(self, Dim=1, h=None, grid=None):
         """
         Parameters
         ----------
@@ -25,111 +25,58 @@ class Dist:
         self.h = h if Dim == 1 else h**2  # h^2 for 2-D area element
         self.grid = grid
 
-        # --- 2-D case --------------------------------------------------------
-        if self.Dim == 2:
-            if grid is None or grid.ndim != 2 or grid.shape[1] != 2:
-                raise ValueError("For Dim=2, provide a grid of shape (n_x*n_y, 2).")
-
-            n_x = len(np.unique(grid[:, 0]))
-            n_y = len(np.unique(grid[:, 1]))
-            expected_size = n_x * n_y
-
-            if f1.size != expected_size or f2.size != expected_size:
-                raise ValueError(
-                    f"Size of f1 or f2 ({f1.size}) does not match grid ({n_x}×{n_y})."
-                )
-
-            self.f1 = f1.reshape(n_x, n_y)
-            self.f2 = f2.reshape(n_x, n_y)
-            self.n_x, self.n_y = n_x, n_y
-            self.x = None  # not used in 2-D
-        # --- 1-D case --------------------------------------------------------
-        else:
-            if len(f1) != len(f2):
-                raise ValueError("Distributions must have the same length.")
-            self.f1 = f1
-            self.f2 = f2
-            self.x = grid
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-    def __call__(self, metric="L2"):
-        """Convenience wrapper."""
-        return self.calculate_distance(metric)
-
-    def calculate_distance(self, metric="L2"):
-        """Compute the chosen distance."""
-        metric = metric.lower()
-        if metric == "l1":
-            return self.L1()
-        elif metric == "l2":
-            return self.L2()
-        elif metric == "h":
-            return self.H()
-        elif metric == "m":
-            return self.M()
-        elif metric == "kl":
-            return self.KL()
-        elif metric == "bc":
-            return self.BC()
-        elif metric == "w2":
-            return self.W2()
-        elif metric == "ovl":
-            return self.OVL()
-        else:
-            raise ValueError(f"Unknown metric: {metric}")
-
     # ------------------------------------------------------------------
     # Individual distances
     # ------------------------------------------------------------------
-    def L1(self):
+    def L1(self, f1, f2):
         """L1 (total variation) distance."""
-        return int_trapz(np.abs(self.f1 - self.f2), Dim=self.Dim, h=self.h)
+        return int_trapz(np.abs(f1 - f2), Dim=self.Dim, h=self.h)
 
-    def L2(self):
+    def L2(self, f1, f2):
         """L2 (Euclidean) distance."""
-        return np.sqrt(int_trapz((self.f1 - self.f2) ** 2, Dim=self.Dim, h=self.h))
+        return np.sqrt(int_trapz((f1 - f2) ** 2, Dim=self.Dim, h=self.h))
 
-    def H(self):
+    def H(self, f1, f2):
         """Hellinger distance."""
-        sqrt_f1 = np.sqrt(self.f1)
-        sqrt_f2 = np.sqrt(self.f2)
-        return np.sqrt(0.5) * np.sqrt(
+        sqrt_f1 = np.sqrt(f1)
+        sqrt_f2 = np.sqrt(f2)
+        return (1/2) * np.sqrt(
             int_trapz((sqrt_f1 - sqrt_f2) ** 2, Dim=self.Dim, h=self.h)
         )
 
-    def M(self):
+    def M(self, f1,f2,r=2):
         """Matusita distance."""
-        sqrt_f1 = np.sqrt(self.f1)
-        sqrt_f2 = np.sqrt(self.f2)
-        bc = int_trapz(np.sqrt(self.f1 * self.f2), Dim=self.Dim, h=self.h)
-        # Ensure bc does not exceed 1 (numerical safety)
-        bc = np.clip(bc, 0.0, 1.0)
-        return np.sqrt(2) * np.sqrt(1 - bc)
-
-    def KL(self):
+        return np.sqrt(
+            int_trapz(np.abs(f1**(1/r) - f2**(1/r))**r, Dim=self.Dim, h=self.h)
+        )
+    
+    def KLinfo(self, f1, f2):
         """Kullback–Leibler divergence (f1 || f2)."""
-        # Add small epsilon to avoid log(0)
         eps = 1e-12
-        f1_safe = np.clip(self.f1, eps, None)
-        f2_safe = np.clip(self.f2, eps, None)
+        f1_safe = np.clip(f1, eps, None)
+        f2_safe = np.clip(f2, eps, None)
         return int_trapz(f1_safe * np.log(f1_safe / f2_safe), Dim=self.Dim, h=self.h)
 
-    def BC(self):
+    def KLdiv(self, f1, f2):
+        """Symmetric Kullback–Leibler divergence (average of f1||f2 and f2||f1)."""
+        return 0.5 * self.KLinfo(f1, f2) + 0.5 * self.KLinfo(f2, f1)
+
+    def BC(self, f1,f2):
         """Bhattacharyya distance."""
-        bc = int_trapz(np.sqrt(self.f1 * self.f2), Dim=self.Dim, h=self.h) + 1e-100
+        bc = int_trapz(np.sqrt(f1 * f2), Dim=self.Dim, h=self.h) + 1e-100
         return -np.log(bc)
 
-    def W2(self):
+    def W2(self, f1,f2):
+        from scipy.integrate import trapezoid
+
         """2-Wasserstein distance."""
         if self.Dim == 1:
-            cdf_f1 = np.cumsum(self.f1) * self.h
-            cdf_f2 = np.cumsum(self.f2) * self.h
+            cdf_f1 = np.cumsum(f1) * self.h
+            cdf_f2 = np.cumsum(f2) * self.h
             t_vals = np.linspace(0, 1, len(cdf_f1))
-            inv_f1 = np.interp(t_vals, cdf_f1, self.x)
-            inv_f2 = np.interp(t_vals, cdf_f2, self.x)
-            return np.sqrt(np.sum((inv_f1 - inv_f2) ** 2) * (1 / len(t_vals)))
+            inv_f1 = np.interp(t_vals, cdf_f1, self.grid)
+            inv_f2 = np.interp(t_vals, cdf_f2, self.grid)
+            return np.sqrt(trapezoid((inv_f1 - inv_f2) ** 2, x=t_vals))
 
         elif self.Dim == 2:
             try:
@@ -137,8 +84,8 @@ class Dist:
             except ImportError:
                 raise ImportError("Install POT: pip install POT")
 
-            f1_flat = self.f1.flatten()
-            f2_flat = self.f2.flatten()
+            f1_flat = f1.flatten()
+            f2_flat = f2.flatten()
             f1_flat /= f1_flat.sum()
             f2_flat /= f2_flat.sum()
 
@@ -148,10 +95,6 @@ class Dist:
 
         else:
             raise NotImplementedError("W2 only supports Dim = 1 or 2.")
-
-    def OVL(self):
-        """Overlapping coefficient distance = 1 - ∫ min(f1,f2)."""
-        return 1 - int_trapz(np.minimum(self.f1, self.f2), Dim=self.Dim, h=self.h)
 
     # ------------------------------------------------------------------
     # Static helpers

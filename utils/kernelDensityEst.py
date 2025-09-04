@@ -16,9 +16,10 @@ class KernelDensityEstimator:
     # ===============================
     # FIT
     # ===============================
-    def fit(self, data: np.ndarray) -> None:
-        """Lưu trữ dữ liệu mẫu để ước lượng KDE."""
+    def fit(self, data: np.ndarray) -> "KernelDensityEstimator":
         self.data = np.asarray(data, dtype=float)
+        return self   # <-- trả về chính đối tượng
+
 
     # ===============================
     # EVALUATE

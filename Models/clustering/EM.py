@@ -52,17 +52,17 @@ class Model:
         self.responsibilities = None
         self.cluster_priors = None
 
-    def _compute_distance(self, pdf1: np.ndarray, pdf2: np.ndarray) -> float:
-        """Tính khoảng cách giữa 2 PDF."""
-        dist_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
-        distance_map = {
-            "L1": dist_obj.L1(),
-            "L2": dist_obj.L2(),
-            "H": dist_obj.H(),
-            "BC": dist_obj.BC(),
-            "W2": dist_obj.W2(),
-        }
-        return distance_map[self.distance_metric]
+
+    def _compute_distance_matrix(self) -> np.ndarray:
+        """Tính ma trận khoảng cách [num_pdfs, num_clusters]."""
+        d_obj = Dist(h=self.bandwidth, Dim=1, grid=self.grid_x)
+
+        num_pdfs = self.pdf_matrix.shape[0]
+        return np.array([
+            [getattr(d_obj, self.distance_metric)(self.pdf_matrix[i], self.centroids[j]) + 1e-10
+             for j in range(self.num_clusters)]
+            for i in range(num_pdfs)
+        ])
 
     def _update_centroids(self) -> None:
         """Cập nhật centroid dựa trên responsibilities."""
@@ -78,12 +78,9 @@ class Model:
 
     def _e_step(self) -> np.ndarray:
         """Bước E: Tính responsibilities mới."""
-        distance_matrix = np.array([
-            [self._compute_distance(self.pdf_matrix[i], self.centroids[j]) + 1e-10
-             for j in range(self.num_clusters)]
-            for i in range(self.pdf_matrix.shape[0])
-        ])
-        new_responsibilities = np.exp(-distance_matrix) * self.cluster_priors[np.newaxis, :]
+        dist_matrix = self._compute_distance_matrix()
+
+        new_responsibilities = np.exp(-dist_matrix) * self.cluster_priors[np.newaxis, :]
         new_responsibilities /= np.sum(new_responsibilities, axis=1, keepdims=True)
         return new_responsibilities
 
@@ -130,10 +127,7 @@ class Model:
 
         assignments = []
         for pdf in new_pdfs:
-            distances = np.array([
-                self._compute_distance(pdf, self.centroids[j]) + 1e-10
-                for j in range(self.num_clusters)
-            ])
+            distances = self._compute_distance_matrix()
             probabilities = self.cluster_priors * np.exp(-distances)
             probabilities /= np.sum(probabilities)
             assignments.append(probabilities)

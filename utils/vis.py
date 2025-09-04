@@ -353,11 +353,11 @@ def plot_CVI_with_k(num_clusters_range, silhouette_scores, dunn_scores, dbi_scor
 
     # --- Frame 1: Silhouette & Dunn (Lớn là tốt hơn)
     ax1.plot(num_clusters_range, silhouette_scores, 'o-', color='black',
-             label=f'Silhouette (k = {k_sil})', lw=3, markersize=9)
+             label=rf'Silhouette $(k = {k_sil})$', lw=3, markersize=9)
     ax1.axvline(k_sil, color='black', linestyle='-', alpha=0.5, lw=3)
 
     ax1.plot(num_clusters_range, dunn_scores, 's--', color='black',
-             label=f'Dunn Index (k = {k_dunn})', lw=3, markersize=9)
+             label=rf'Dunn Index $(k = {k_dunn})$', lw=3, markersize=9)
     ax1.axvline(k_dunn, color='black', linestyle='--', alpha=0.5, lw=3)
 
     ax1.set_ylabel("CVI")
@@ -366,7 +366,7 @@ def plot_CVI_with_k(num_clusters_range, silhouette_scores, dunn_scores, dbi_scor
 
     # --- Frame 2: DBI (Bé là tốt hơn)
     ax2.plot(num_clusters_range, dbi_scores, 'o-.', color='black',
-             label=f'Davies-Bouldin (k = {k_dbi})', lw=3, markersize=9)
+             label=rf'Davies-Bouldin $(k = {k_dbi})$', lw=3, markersize=9)
     ax2.axvline(k_dbi, color='black', linestyle='-.', alpha=0.5, lw=3)
 
     ax2.set_xlabel("Số chùm")

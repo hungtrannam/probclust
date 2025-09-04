@@ -23,8 +23,8 @@ class CVI:
         D = np.zeros((n_pdf, n_pdf))
         for i in range(n_pdf):
             for j in range(i + 1, n_pdf):
-                d = Dist(F_data[i], F_data[j], h=self.bandwidth, grid=self.grid)
-                D[i, j] = getattr(d, self.distance_metric)()
+                d = Dist(h=self.bandwidth, grid=self.grid)
+                D[i, j] = getattr(d, self.distance_metric)(F_data[i], F_data[j])
                 D[j, i] = D[i, j]
         return D
 
@@ -84,14 +84,14 @@ class CVI:
             centroid = np.mean(F_data[idx], axis=0)
             centroids.append(centroid)
             scatters.append(
-                np.mean([Dist(f, centroid, h=self.bandwidth, grid=self.grid).L2() for f in F_data[idx]])
+                np.mean([getattr(Dist(h=self.bandwidth, grid=self.grid), self.distance_metric)(f, centroid) for f in F_data[idx]])
             )
 
         DB = 0
         for i in range(k):
             max_ratio = max(
                 (scatters[i] + scatters[j]) /
-                getattr(Dist(centroids[i], centroids[j], h=self.bandwidth, grid=self.grid), self.distance_metric)()
+                getattr(Dist(h=self.bandwidth, grid=self.grid), self.distance_metric)(centroids[i], centroids[j])
                 for j in range(k) if i != j
             )
             DB += max_ratio
@@ -168,3 +168,126 @@ def find_elbow_k(k_values, scores):
         for i in range(len(k_values))
     ]
     return k_values[np.argmax(distances)]
+
+
+import numpy as np
+from sklearn.metrics import (accuracy_score, precision_score, recall_score,
+                             f1_score, roc_auc_score, roc_curve,
+                             confusion_matrix, classification_report)
+
+class ClassifiCI:
+    """
+    Một class tổng hợp TẤT CẢ các đánh giá cho mô hình phân loại.
+    Dùng cho cả nhị phân và đa lớp.
+    """
+
+    # ------------- Constructor -------------
+    def __init__(self, y_true, y_pred, y_prob=None, labels=None):
+        """
+        y_true : mảng nhãn thật (1-D).
+        y_pred : mảng nhãn dự đoán (1-D).
+        y_prob : mảng xác suất dự đoán (2-D cho đa lớp, 1-D hoặc 2-D cho nhị phân).
+        labels : danh sách tên lớp (để in ra cho đẹp).
+        """
+        self.y_true = np.asarray(y_true)
+        self.y_pred = np.asarray(y_pred)
+        self.y_prob = np.asarray(y_prob) if y_prob is not None else None
+        self.labels = labels
+
+    # ------------- Core metrics -------------
+    def accuracy(self):
+        return accuracy_score(self.y_true, self.y_pred)
+
+    def precision(self, average='binary'):
+        return precision_score(self.y_true, self.y_pred, average=average, zero_division=0)
+
+    def recall(self, average='binary'):
+        return recall_score(self.y_true, self.y_pred, average=average, zero_division=0)
+
+    def f1(self, average='binary'):
+        return f1_score(self.y_true, self.y_pred, average=average, zero_division=0)
+
+    def confusion(self, normalize=None):
+        """
+        normalize=None | 'true' | 'pred' | 'all'
+        """
+        return confusion_matrix(self.y_true, self.y_pred, normalize=normalize)
+
+    # ------------- ROC-AUC -------------
+    def roc_auc(self, multi_class='ovr'):
+        """
+        multi_class : 'ovr' (One-vs-Rest) hoặc 'ovo' (One-vs-One)
+        Trả về AUC cho nhị phân hoặc dict cho đa lớp.
+        """
+        if self.y_prob is None:
+            return None
+        classes = np.unique(self.y_true)
+        if len(classes) == 2:
+            # Nhị phân
+            if self.y_prob.ndim == 2:
+                # shape (N, 2) lấy cột thứ 1
+                return roc_auc_score(self.y_true, self.y_prob[:, 1])
+            else:
+                # shape (N,)
+                return roc_auc_score(self.y_true, self.y_prob)
+        else:
+            # Đa lớp
+            return roc_auc_score(self.y_true, self.y_prob,
+                                 multi_class=multi_class, labels=classes)
+
+    # ------------- ROC curve -------------
+    def roc_curve(self):
+        """
+        Chỉ dùng cho bài toán nhị phân.
+        Trả về (fpr, tpr, thresholds)
+        """
+        if self.y_prob is None or len(np.unique(self.y_true)) != 2:
+            return None
+        if self.y_prob.ndim == 2:
+            y_score = self.y_prob[:, 1]
+        else:
+            y_score = self.y_prob
+        return roc_curve(self.y_true, y_score)
+
+    # ------------- Classification report -------------
+    def report(self, digits=4):
+        target_names = self.labels if self.labels else None
+        return classification_report(self.y_true, self.y_pred,
+                                     target_names=target_names, digits=digits)
+
+    # ------------- TPR, TNR, FPR, FNR -------------
+    def rates(self):
+        """
+        Tính TPR, TNR, FPR, FNR cho nhị phân.
+        Trả về dict.
+        """
+        cm = self.confusion()
+        if cm.shape != (2, 2):
+            raise ValueError("rates() chỉ áp dụng cho bài toán 2 lớp.")
+        tn, fp, fn, tp = cm.ravel()
+        tpr = tp / (tp + fn + 1e-12)
+        tnr = tn / (tn + fp + 1e-12)
+        fpr = fp / (fp + tn + 1e-12)
+        fnr = fn / (fn + tp + 1e-12)
+        return dict(TPR=tpr, TNR=tnr, FPR=fpr, FNR=fnr)
+
+    # ------------- All-in-one summary -------------
+    def summary(self, average='binary', multi_class='ovr'):
+        """
+        In ra và trả về dict chứa hầu hết các chỉ số.
+        """
+        res = {
+            'Accuracy' : self.accuracy(),
+            'Precision': self.precision(average=average),
+            'Recall'   : self.recall(average=average),
+            'F1'       : self.f1(average=average),
+            'ROC-AUC'  : self.roc_auc(multi_class=multi_class),
+        }
+        print("=== Summary ===")
+        for k, v in res.items():
+            print(f"{k:12}: {v}")
+        print("\n=== Confusion Matrix ===")
+        print(self.confusion())
+        print("\n=== Classification Report ===")
+        print(self.report())
+        return res
