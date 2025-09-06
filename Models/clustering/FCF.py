@@ -70,11 +70,6 @@ class Model:
             return np.linspace(0.0, 1.0, n)
         return cdf / Z
 
-    @staticmethod
-    def _normalize_pdf(pdf: np.ndarray, dx: float) -> np.ndarray:
-        Z = float(np.sum(pdf) * dx)
-        return pdf / (Z + 1e-12)
-
 
     def _update_centroids_w2(self) -> None:
         """
@@ -117,7 +112,6 @@ class Model:
             # 5) pdf tâm = dF/dx (đạo hàm rời rạc trên lưới)
             fk = np.gradient(Fk, self.grid_x)
             fk = np.clip(fk, 0.0, None)          # tránh âm do nhiễu số
-            fk = self._normalize_pdf(fk, dx)          # chuẩn hoá
 
             centroids[k] = fk
 

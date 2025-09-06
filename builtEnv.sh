@@ -6,35 +6,39 @@
 # File: builtEnv.sh
 # Description: Script to set up a Python virtual environment with required packages
 
+
 #!/bin/bash
+set -e
 
-set -e  # Exit script on any error
-
-echo "🟢 Updating the system..."
+echo "🟢 Updating system..."
 sudo apt update -y && sudo apt upgrade -y
+sudo apt install -y build-essential
 
-############## System Dependencies ##############
-echo "Installing system dependencies..."
+ENV_NAME="proclustEnv"
+conda deactivate 2>/dev/null || true
+conda env remove -n "$ENV_NAME" -y || true
+echo "✅ Creating clean environment '$ENV_NAME' with Python 3.11..."
+conda create -n "$ENV_NAME" python=3.11 -y
 
-############## Create virtual environment ##############
-if [ ! -d ".venv" ]; then
-    echo "Creating a virtual environment..."
-    python3 -m venv .venv
-else
-    echo "Virtual environment already exists."
-fi
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$ENV_NAME"
 
-############## Activate virtual environment ##############
-echo "Activating the virtual environment..."
-source .venv/bin/activate
+# 1. PyTorch CUDA 12.1 (không ép 11.8)
+echo "🔥 Installing PyTorch CUDA 12.1..."
+pip install --upgrade pip
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-############## Upgrade pip ##############
-echo "Upgrading pip..."
-pip install --upgrade pip setuptools wheel
+# # 2. TensorFlow GPU build CUDA 12
+# echo "📦 Installing TensorFlow GPU..."
+# pip install tensorflow==2.17.0
+# pip install \
+#     reformer_pytorch optuna-dashboard wandb captum\
+#     einops optunahub cmaes \
+#     gpustat gputil 
 
-############## Install packages ##############
-echo "Installing required packages..."
-pip install --no-cache-dir \
+# 3. Các gói còn lại (tránh conda solver)
+echo "📦 Installing other packages..."
+conda install -y -c conda-forge \
     numpy\
     matplotlib pandas \
     tqdm seaborn optuna\
@@ -46,19 +50,16 @@ pip install --no-cache-dir \
     scikit-image\
     pyvis
 
-
 ############## Save environment ##############
-echo "Exporting installed packages to requirements.txt..."
-pip freeze > requirements.txt
+echo "💾 Exporting environment to environment.yml..."
+conda env export --no-builds > environment.yml
 
 ############## Jupyter kernel setup ##############
-echo "Setting up Jupyter kernel..."
-python -m ipykernel install --user --name=.venv --display-name "Python (.venv)"
+echo "📝 Setting up Jupyter kernel..."
+python -m ipykernel install --user --name=$ENV_NAME --display-name "Python ($ENV_NAME)"
 
-############## Bash alias utility ##############
-echo "Adding alias for quick env activation..."
-if ! grep -q "alias activate_env=" ~/.bashrc; then
-    echo "alias activate_env='source $(pwd)/.venv/bin/activate'" >> ~/.bashrc
-fi
+# 5. Alias
+grep -q "alias activate_env=" ~/.bashrc || \
+  echo "alias activate_env='conda activate $ENV_NAME'" >> ~/.bashrc
 
-echo "Setup complete. Run: source ~/.bashrc"
+echo "🎉 Done. Run: source ~/.bashrc && activate_env"
