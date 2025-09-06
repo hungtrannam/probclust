@@ -122,7 +122,6 @@ class Model:
         """Cập nhật tâm cụm (centroid)."""
         weights = self.membership_matrix ** self.fuzziness
         self.centroids = (weights.T @ self.pdf_matrix) / (np.sum(weights.T, axis=1, keepdims=True) + 1e-12)
-
         
 
     def _compute_distance_matrix(self) -> np.ndarray:

@@ -21,14 +21,8 @@ class Model:
         self.verbose = verbose
 
     def _compute_distance(self, pdf1, pdf2):
-        d_obj = Dist(pdf1, pdf2, h=self.bandwidth, Dim=1, grid=self.grid_x)
-        return {
-            'L1': d_obj.L1(),
-            'L2': d_obj.L2(),
-            'H': d_obj.H(),
-            'BC': d_obj.BC(),
-            'W2': d_obj.W2()
-        }.get(self.distance_metric, None)
+        d_obj = Dist(h=self.bandwidth, Dim=1, grid=self.grid_x)
+        return getattr(d_obj, self.distance_metric)(pdf1,pdf2)
 
     def _region_query(self, idx):
         neighbors = []
@@ -85,15 +79,21 @@ class Model:
     def get_results(self):
         """
         Trả về:
-        - U: ma trận phân vùng nhị phân (num_clusters, num_pdfs)
+        - U: ma trận phân vùng nhị phân (num_clusters + 1, num_pdfs)
+        Hàng cuối cùng (= hàng nhiễu) tương ứng nhãn -1.
         """
-        unique_clusters = sorted(set(self.labels) - {-1})
+        unique_clusters = sorted(set(self.labels) - {-1})  # loại -1 ra
         num_clusters = len(unique_clusters)
-        U = np.zeros((num_clusters, self.num_pdfs))
 
+        # Khởi tạo ma trận 0-1: (số cụm + 1 hàng nhiễu) x số pdf
+        U = np.zeros((num_clusters + 1, self.num_pdfs), dtype=int)
+
+        # Gán 1 cho các điểm thuộc cụm
         for i, label in enumerate(self.labels):
             if label != -1:
-                cluster_index = unique_clusters.index(label) 
-                U[cluster_index, i] = 1
+                cluster_idx = unique_clusters.index(label)
+                U[cluster_idx, i] = 1
+            else:  # label == -1  -> nhiễu
+                U[-1, i] = 1  # hàng cuối cùng là hàng nhiễu
 
         return U

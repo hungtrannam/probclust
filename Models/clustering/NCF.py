@@ -45,17 +45,16 @@ class Model:
     # ===============================
     # DISTANCE
     # ===============================
-    def _compute_distance(self, f1: np.ndarray, f2: np.ndarray) -> float:
-        """Tính khoảng cách giữa 2 PDF."""
-        d_obj = Dist(f1, f2, h=self.bandwidth, Dim=1, grid=self.grid_x)
-        dist = {
-            "L1": d_obj.L1(),
-            "L2": d_obj.L2(),
-            "H": d_obj.H(),
-            "BC": d_obj.BC(),
-            "W2": d_obj.W2(),
-        }[self.distance_metric]
-        return max(dist, self.eps)
+
+    def _compute_distance(self,f1,f2) -> np.ndarray:
+        """Tính ma trận khoảng cách [num_pdfs, num_clusters]."""
+        d_obj = Dist(h=self.bandwidth, Dim=1, grid=self.grid_x)
+
+        return np.array([
+            [getattr(d_obj, self.distance_metric)(f1,f2) + 1e-10
+             for j in range(self.num_clusters)]
+            for i in range(self.num_pdfs)
+        ])
 
     # ===============================
     # FIT

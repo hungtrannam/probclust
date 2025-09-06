@@ -16,6 +16,8 @@ class Model:
         distance_metric: str = "L2",
         bandwidth: float = 0.01,
         seed: int = None,
+        Dim=None,
+        centroid_mode: str = "mean",
         verbose: bool = False,
     ):
         """
@@ -45,6 +47,9 @@ class Model:
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
         self.seed = seed
+        self.centroids_mode = centroid_mode
+        self.Dim = Dim if Dim is not None else 1
+
         self.verbose = verbose
 
         self.pdf_matrix = None
@@ -52,6 +57,61 @@ class Model:
         self.responsibilities = None
         self.cluster_priors = None
 
+    @staticmethod
+    def _cdf_from_pdf(pdf: np.ndarray, dx: float) -> np.ndarray:
+        cdf = np.cumsum(pdf) * dx
+        Z = float(cdf[-1]) if cdf.size else 1.0
+        if Z <= 0:
+            n = pdf.size
+            return np.linspace(0.0, 1.0, n)
+        return cdf / Z
+
+
+    def _update_centroids_w2(self) -> None:
+        """
+        Cập nhật tâm cụm bằng Wasserstein-2 barycenter (1D).
+        - Dựa trên tính chất: Q_k(t) = sum_j w_jk * Q_j(t), với w_jk = U_jk^m / sum_j U_jk^m.
+        - Sau đó suy ra CDF F_k(x) = Q_k^{-1}(x) bằng nội suy ngược, rồi pdf = dF/dx.
+        """
+        assert self.Dim == 1, "W2 barycenter hiện cài cho 1D."
+        assert self.pdf_matrix is not None and self.responsibilities is not None
+
+        dx = float(self.grid_x[1] - self.grid_x[0])
+        n_samples, m = self.pdf_matrix.shape
+        K = self.num_clusters
+
+        # 1) Tiền tính các inverse-CDF (quantile) cho MỌI pdf một lần
+        t_grid = np.linspace(0.0, 1.0, m)
+        inv_mat = np.empty((n_samples, m), dtype=float)  # inv_mat[j, :] = Q_j(t_grid)
+
+        for j in range(n_samples):
+            cdf_j = self._cdf_from_pdf(self.pdf_matrix[j], dx)
+            # nội suy Q_j(t) = F_j^{-1}(t) trên grid t_grid
+            inv_mat[j] = np.interp(t_grid, cdf_j, self.grid_x)
+
+        # 2) Trọng số mờ cho từng cụm
+        W = self.responsibilities         # [n_samples, K]
+        denom = np.sum(W, axis=0, keepdims=True) + 1e-12      # [1, K]
+        W_norm = W / denom                                    # chuẩn hoá theo cột
+
+        # 3) Với mỗi cụm: Q_k(t) = Σ_j w_jk * Q_j(t)
+        centroids = np.empty((K, m), dtype=float)
+        for k in range(K):
+            Qk = (W_norm[:, k][:, None] * inv_mat).sum(axis=0)  # [m]
+
+            # đảm bảo đơn điệu không giảm (tránh nhiễu số)
+            Qk = np.maximum.accumulate(Qk)
+
+            # 4) Suy ra CDF tâm: F_k(x) = Q_k^{-1}(x) (nội suy ngược)
+            Fk = np.interp(self.grid_x, Qk, t_grid, left=0.0, right=1.0)
+
+            # 5) pdf tâm = dF/dx (đạo hàm rời rạc trên lưới)
+            fk = np.gradient(Fk, self.grid_x)
+            fk = np.clip(fk, 0.0, None)          # tránh âm do nhiễu số
+
+            centroids[k] = fk
+
+        self.centroids = centroids
 
     def _compute_distance_matrix(self) -> np.ndarray:
         """Tính ma trận khoảng cách [num_pdfs, num_clusters]."""
@@ -86,17 +146,19 @@ class Model:
 
     def fit(self, pdf_matrix: np.ndarray) -> None:
         """Huấn luyện EM."""
+        
         self.pdf_matrix = pdf_matrix
-        num_pdfs, num_points = pdf_matrix.shape
+        self.num_pdfs, _ = pdf_matrix.shape
+
 
         if self.seed is not None:
             np.random.seed(self.seed)
 
         # Khởi tạo responsibilities
-        self.responsibilities = np.random.dirichlet(np.ones(self.num_clusters), size=num_pdfs)
+        self.responsibilities = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
 
         # Khởi tạo centroids từ dữ liệu
-        init_indices = np.random.choice(num_pdfs, self.num_clusters, replace=False)
+        init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
         self.centroids = pdf_matrix[init_indices, :].copy()
 
         # Khởi tạo cluster priors
@@ -104,7 +166,10 @@ class Model:
 
         for iteration in range(self.max_iterations):
             # M-step
-            self._update_centroids()
+            if self.centroids_mode == "mean":
+                self._update_centroids()   
+            elif self.centroids_mode == "frechet":
+                self._update_centroids_w2()   
             self._update_cluster_priors()
 
             # E-step
