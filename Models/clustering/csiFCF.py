@@ -36,27 +36,36 @@ class Model:
 
         # runtime attributes
         self.pdf_matrix = None
-        self.centroids = None
+        self.Theta = None
         self.U = None          # membership matrix (N, K)
         self.rho = None        # cluster-size penalty (N, 1)
         self.obj_hist = []
+        self.rho = []
 
     def _update_centroids(self):
         """Standard weighted mean (with fuzzy weights)."""
         W = self.U ** self.m
-        self.centroids = (W.T @ self.pdf_matrix) / (W.sum(axis=0)[:, None] + 1e-12)
+        self.Theta = (W.T @ self.pdf_matrix) / (W.sum(axis=0)[:, None] + 1e-12)
 
     # ---------- distance ----------
     def _dist_matrix(self):
         """Return (N, K) distance matrix."""
         dobj = Dist(h=self.h, Dim=self.Dim, grid=self.grid_x)
         func = getattr(dobj, self.metric)
-        return np.array([[func(self.pdf_matrix[i], self.centroids[j])**2 + 1e-10
-                          for j in range(self.num_clusters)]
-                         for i in range(self.pdf_matrix.shape[0])])
+
+        self.num_pdfs = self.pdf_matrix.shape[0]  # num_pdfs
+        self.num_clusters = self.num_clusters         # num_clusters
+        dist_matrix = np.zeros((self.num_pdfs, self.num_clusters))
+
+        # Tính khoảng cách từng cặp (điểm i, centroid j)
+        for i in range(self.num_pdfs):
+            for j in range(self.num_clusters):
+                distance = func(self.pdf_matrix[i], self.Theta[j])
+                dist_matrix[i, j] = distance**2 + 1e-10
+        return dist_matrix
 
     # ---------- membership with size penalty ----------
-    def _update_membership(self, D):
+    def _update_membership(self, D, rho):
         """
         D : (N, K) distances
         rho : (N, 1) penalties
@@ -66,7 +75,7 @@ class Model:
         exp = 1. / (self.m - 1)
         inv = (D[:, :, None] / D[:, None, :]) ** exp  # (N,K,K)
         tmp = np.sum(inv, axis=2)                     # (N,K)
-        U = self.rho * (1. / tmp)                     # (N,K)
+        U = rho[:, None] * (1. / tmp)                 # (N,K)
         return U
 
     # ---------- public API ----------
@@ -80,30 +89,25 @@ class Model:
         # init membership (Dirichlet)
         self.U = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
         # init centroids
-        self.centroids = pdf_matrix[np.random.choice(self.num_pdfs, self.num_clusters, replace=False)]
+        self.Theta = pdf_matrix[np.random.choice(self.num_pdfs, self.num_clusters, replace=False)]
 
         self.obj_hist.clear()
-        self.rho = np.ones((self.num_pdfs, 1))
 
         for it in range(self.maxit):
             # # ----- centroid step -----
-            # if self.mode == "frechet":
-            #     self._update_centroids_w2()
-            # else:
             self._update_centroids()
-
             # ----- distance & membership -----
             D = self._dist_matrix()
             # compute hard labels for size estimation
             labels = self.U.argmax(axis=1)
             S = np.bincount(labels, minlength=self.num_clusters) / self.num_pdfs      # (K,)
-            self.rho = (1 - S[labels]) / (1 - S).max()    # (N,)
-            self.rho = self.rho.reshape(-1, 1)
-
-            new_U = self._update_membership(D)
+            rho = (1 - S[labels]) / (1 - S).max()    # (N,)
+            
+            new_U = self._update_membership(D, rho)
 
             # ----- objective (for history only) -----
-            J = np.sum((new_U ** self.m) * D)
+            J = np.sum((new_U ** self.m) * D /  (rho[:, None] + 10e-10))
+            self.rho.append(rho)
             self.obj_hist.append(J)
 
             # ----- convergence -----
@@ -127,7 +131,7 @@ class Model:
         func = getattr(dobj, self.metric)
         memberships = []
         for pdf in new_pdfs:
-            d = np.array([func(pdf, c) + 1e-10 for c in self.centroids])
+            d = np.array([func(pdf, c) + 1e-10 for c in self.Theta])
             exp = 1. / (self.m - 1)
             inv = (d / d[:, None]) ** exp
             u = 1. / inv.sum(axis=1)
@@ -136,7 +140,7 @@ class Model:
         return np.array(memberships)
 
     def get_results(self):
-        return self.U.T.copy(), self.centroids.copy(), self.obj_hist.copy()
+        return self.U.T.copy(), self.Theta.copy(), self.obj_hist.copy()
 
     def get_hard_assignments(self):
         return self.U.argmax(axis=1)
