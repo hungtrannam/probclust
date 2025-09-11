@@ -4,11 +4,11 @@ from utils.dist import Dist
 
 class Model:
     """
-    Neutrosophic Clustering cho dữ liệu hàm mật độ xác suất (PDF).
+    Neutrosophic Clustering cho dữ liệu hàm mật độ xác suất (PDFs).
     Bao gồm 3 thành phần: 
-    - T (membership - độ thuộc)
-    - I (indeterminacy - độ không xác định)
-    - F (hesitation - độ do dự)
+        - T: membership (độ thuộc)
+        - I: indeterminacy (độ không xác định)
+        - F: hesitation (độ do dự)
     """
 
     def __init__(
@@ -25,11 +25,12 @@ class Model:
         distance_metric: str = "L2",
         bandwidth: float = 0.01,
         seed: int = None,
+        Dim: int = 1,
         verbose: bool = False,
     ):
         self.grid_x = grid_x
-        self.c = num_clusters
-        self.m = m
+        self.num_clusters = num_clusters
+        self.fuzziness = m
         self.delta = delta
         self.w1, self.w2, self.w3 = w1, w2, w3
         self.max_iterations = max_iterations
@@ -38,113 +39,126 @@ class Model:
         self.bandwidth = bandwidth
         self.seed = seed
         self.verbose = verbose
+        self.Dim = Dim
         self.eps = 1e-10
 
-        self.T, self.I, self.F, self.C = None, None, None, None
+        # Kết quả
+        self.T = None
+        self.I = None
+        self.F = None
+        self.Theta = None
+        self.num_pdfs = None
+        self.J_hist = []
 
-    # ===============================
-    # DISTANCE
-    # ===============================
-
-    def _compute_distance(self,f1,f2) -> np.ndarray:
-        """Tính ma trận khoảng cách [num_pdfs, num_clusters]."""
-        d_obj = Dist(h=self.bandwidth, Dim=1, grid=self.grid_x)
-
-        return np.array([
-            [getattr(d_obj, self.distance_metric)(f1,f2) + 1e-10
-             for j in range(self.num_clusters)]
-            for i in range(self.num_pdfs)
-        ])
-
-    # ===============================
-    # FIT
-    # ===============================
-    def fit(self, X: np.ndarray) -> None:
-        """Huấn luyện mô hình NCF."""
-        N, D = X.shape
-        c, m, delta = self.c, self.m, self.delta
+    def fit(self, pdf_matrix: np.ndarray) -> None:
+        """
+        Huấn luyện mô hình Neutrosophic Clustering cho dữ liệu PDF.
+        """
+        self.num_pdfs, D = pdf_matrix.shape
+        c = self.num_clusters
+        m = self.fuzziness
+        delta = self.delta
+        power = -2 / (m - 1)
 
         if self.seed is not None:
             np.random.seed(self.seed)
 
         # Khởi tạo
-        C = X[np.random.choice(N, c, replace=False)]
-        T = np.full((c, N), 1 / c)
-        I = np.full(N, 1 / (c + 2))
-        F = np.full(N, 1 / (c + 2))
-        power = -2 / (m - 1)
+        Theta = pdf_matrix[np.random.choice(self.num_pdfs, c, replace=False)]
+        T = np.random.dirichlet(np.ones(c), size=self.num_pdfs)        # shape (N, c)
+        I = np.full(self.num_pdfs, 1 / (c + 2))
+        F = np.full(self.num_pdfs, 1 / (c + 2))
+
+        dist_obj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
 
         for iteration in range(self.max_iterations):
-            C_prev = C.copy()
+            Theta_prev = Theta.copy()
 
-            # Step 1: tính c_i_max (trung bình 2 cụm gần nhất)
-            c_i_max = np.zeros((N, D))
-            dist_matrix = np.zeros((N, c))
-            for i in range(N):
-                dists = [self._compute_distance(X[i], C[j]) for j in range(c)]
-                dist_matrix[i] = dists
-                p, q = np.argsort(dists)[:2]
-                c_i_max[i] = (C[p] + C[q]) / 2
+            # Tính ma trận khoảng cách D_{ij} (N, c)
+            D = np.zeros((self.num_pdfs, c))
+            for i in range(self.num_pdfs):
+                for j in range(c):
+                    D[i, j] = getattr(dist_obj, self.distance_metric)(pdf_matrix[i], Theta[j]) + self.eps
 
-            # Step 2: tính khoảng cách dist_I
-            dist_I = np.array([self._compute_distance(X[i], c_i_max[i]) for i in range(N)])
-            dist_F = max(delta, self.eps)
+            # Tính trung tâm gần nhất (cho phần I)
+            dist_I = np.zeros(self.num_pdfs)
+            for i in range(self.num_pdfs):
+                nearest = np.argsort(D[i])[:2]
+                avg_c = (Theta[nearest[0]] + Theta[nearest[1]]) / 2
+                dist_I[i] = getattr(dist_obj, self.distance_metric)(pdf_matrix[i], avg_c) + self.eps
 
-            # Step 3: tính K_i
+            # Tính hệ số chuẩn hoá K_i
             K = 1.0 / (
-                np.sum((1 / self.w1) * dist_matrix ** power, axis=1)
-                + (1 / self.w2) * dist_I ** power
-                + (1 / self.w3) * dist_F ** power
-                + self.eps
-            )
+                np.sum((1 / self.w1) * D ** power, axis=1) +
+                (1 / self.w2) * dist_I ** power +
+                (1 / self.w3) * delta ** power +
+                self.eps
+            )  # shape (N,)
 
-            # Step 4: cập nhật T, I, F
-            for i in range(N):
-                T[:, i] = K[i] / self.w1 * dist_matrix[i] ** power
-                I[i] = K[i] / self.w2 * dist_I[i] ** power
-                F[i] = K[i] / self.w3 * dist_F ** power
+            # Cập nhật T, I, F
+            T = (K[:, None] / self.w1) * D ** power     # (N, c)
+            I = (K / self.w2) * dist_I ** power         # (N,)
+            F = (K / self.w3) * delta ** power          # (N,)
 
-            # Step 5: cập nhật C_j
+            # Chuẩn hoá T + I + F = 1 (nếu muốn)
+            total = T.sum(axis=1) + I + F
+            T /= total[:, None]
+            I /= total
+            F /= total
+
+            # Cập nhật centroid Theta_j
             for j in range(c):
-                weights = (self.w1 * T[j]) ** m
-                C[j] = np.sum(weights[:, None] * X, axis=0) / (np.sum(weights) + self.eps)
+                weights = (self.w1 * T[:, j]) ** m       # (N,)
+                Theta[j] = np.sum(weights[:, None] * pdf_matrix, axis=0) / (np.sum(weights) + self.eps)
 
-            # Step 6: kiểm tra hội tụ
-            delta_c = np.linalg.norm(C - C_prev)
+            # Kiểm tra hội tụ
+            delta_c = np.linalg.norm(Theta - Theta_prev)
+            obj = np.sum(T ** m * D ** 2)
+            self.J_hist.append(obj)
+
             if self.verbose:
-                print(f"Iteration {iteration + 1}, delta = {delta_c:.6e}")
+                print(f"[{iteration+1}] ΔC={delta_c:.2e}, Obj={obj:.6f}")
+
             if delta_c < self.tolerance or np.isnan(delta_c):
-                if self.verbose:
-                    print("Converged or stopped.")
                 break
 
-        self.T, self.I, self.F, self.C = T, I, F, C
+        # Lưu kết quả
+        self.T, self.I, self.F, self.Theta = T, I, F, Theta
 
-    # ===============================
-    # PREDICT
-    # ===============================
     def predict(self, new_X: np.ndarray) -> np.ndarray:
-        """Dự đoán membership cho dữ liệu mới."""
+        """
+        Dự đoán membership T cho dữ liệu mới.
+        Trả về shape: (c, num_samples)
+        """
         if new_X.ndim == 1:
             new_X = new_X[np.newaxis, :]
 
-        num_new = new_X.shape[0]
-        memberships = np.zeros((self.c, num_new))
-        power = -2 / (self.m - 1)
+        N_new = new_X.shape[0]
+        c = self.num_clusters
+        m = self.fuzziness
+        power = -2 / (m - 1)
 
-        for i in range(num_new):
-            dists = np.array([self._compute_distance(new_X[i], self.C[j]) for j in range(self.c)])
-            sum_T = np.sum((1 / self.w1) * dists ** power)
-            sum_I = (1 / self.w2) * np.min(dists) ** power
-            sum_F = (1 / self.w3) * self.delta ** power
-            K_i = 1.0 / (sum_T + sum_I + sum_F + self.eps)
-            memberships[:, i] = K_i / self.w1 * dists ** power
+        dist_obj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
+        T_new = np.zeros((c, N_new))
 
-        return memberships
+        for i in range(N_new):
+            D = np.array([
+                getattr(dist_obj, self.distance_metric)(new_X[i], self.Theta[j]) + self.eps
+                for j in range(c)
+            ])
+            dist_I = np.min(D)
+            K = 1.0 / (
+                np.sum((1 / self.w1) * D ** power) +
+                (1 / self.w2) * dist_I ** power +
+                (1 / self.w3) * self.delta ** power +
+                self.eps
+            )
+            T_new[:, i] = K / self.w1 * D ** power
 
-    # ===============================
-    # GET RESULTS
-    # ===============================
+        return T_new
+
     def get_results(self):
-        """Trả về ma trận T, I, F và các centroid C."""
-        return self.T.copy(), self.I.copy(), self.F.copy(), self.C.copy()
+        """
+        Trả về các kết quả: T, I, F, Theta, J_hist
+        """
+        return self.T.T.copy(), self.I.copy(), self.F.copy(), self.Theta.copy(), self.J_hist
