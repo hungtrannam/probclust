@@ -10,7 +10,7 @@
 #!/bin/bash
 
 REPO_URL="git@github.com:hungtrannam/probclust.git"
-BRANCH="ver1"
+BRANCH="main"
 DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
 MSG="[$DATETIME] Initial commit"
 
