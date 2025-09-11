@@ -57,7 +57,6 @@ class Model:
         self.num_clusters = self.num_clusters         # num_clusters
         dist_matrix = np.zeros((self.num_pdfs, self.num_clusters))
 
-        # Tính khoảng cách từng cặp (điểm i, centroid j)
         for i in range(self.num_pdfs):
             for j in range(self.num_clusters):
                 distance = func(self.pdf_matrix[i], self.Theta[j])
@@ -65,20 +64,22 @@ class Model:
         return dist_matrix
 
     # ---------- membership with size penalty ----------
-    def _update_membership(self, D, rho):
+    # Instead of rho[i] for each sample, use rho_k[j] for each cluster
+    def _update_membership(self, D, rho_k):
         """
         D : (N, K) distances
-        rho : (N, 1) penalties
+        rho_k : (K,) penalties per cluster
         returns U : (N, K) memberships
         """
         D = D + 1e-12
         exp = 1. / (self.m - 1)
-        inv = (D[:, :, None] / D[:, None, :]) ** exp  # (N,K,K)
-        tmp = np.sum(inv, axis=2)                     # (N,K)
-        U = rho[:, None] * (1. / tmp)                 # (N,K)
+        # Multiply distance per cluster with its penalty
+        D_weighted = D * rho_k[None, :]  # (N, K)
+        inv = (D_weighted[:, :, None] / D_weighted[:, None, :]) ** exp  # (N,K,K)
+        tmp = np.sum(inv, axis=2)  # (N,K)
+        U = 1. / tmp
         return U
 
-    # ---------- public API ----------
     def fit(self, pdf_matrix: np.ndarray):
         self.pdf_matrix = pdf_matrix
         self.num_pdfs = pdf_matrix.shape[0]
@@ -86,42 +87,56 @@ class Model:
         if self.seed is not None:
             np.random.seed(self.seed)
 
-        # init membership (Dirichlet)
-        self.U = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
-        # init centroids
+        # Khởi tạo mềm
+        self.U = np.random.rand(self.num_pdfs, self.num_clusters)
+        self.U = self.U / self.U.sum(axis=1, keepdims=True)
+        
+        # Khởi tạo centroid
         self.Theta = pdf_matrix[np.random.choice(self.num_pdfs, self.num_clusters, replace=False)]
 
         self.obj_hist.clear()
+        eps = 1e-6
 
         for it in range(self.maxit):
-            # # ----- centroid step -----
+            # ---- Cập nhật tâm cụm ----
             self._update_centroids()
-            # ----- distance & membership -----
-            D = self._dist_matrix()
-            # compute hard labels for size estimation
-            labels = self.U.argmax(axis=1)
-            S = np.bincount(labels, minlength=self.num_clusters) / self.num_pdfs      # (K,)
-            rho = (1 - S[labels]) / (1 - S).max()    # (N,)
             
-            new_U = self._update_membership(D, rho)
+            # ---- Khoảng cách ----
+            D = self._dist_matrix()
+            
+            # ---- Kích thước cụm và penalty ----
+            labels = self.U.argmax(axis=1)
+            S = np.bincount(labels, minlength=self.num_clusters) / self.num_pdfs
+            rho_k = (1 - S + eps) / (1 - S + eps).max()
 
-            # ----- objective (for history only) -----
-            J = np.sum((new_U ** self.m) * D /  (rho[:, None] + 10e-10))
-            self.rho.append(rho)
+            
+            # ---- Cập nhật membership ----
+            new_U = self._update_membership(D, rho_k)
+
+            # ---- Hàm mục tiêu (objective) ----
+            D_weighted = D * rho_k[None, :]  # dùng đúng cách cập nhật khoảng cách
+            J = np.sum((new_U ** self.m) * D_weighted)
+            self.rho.append(rho_k.copy())
             self.obj_hist.append(J)
 
-            # ----- convergence -----
+            # ---- Kiểm tra hội tụ ----
             delta = np.linalg.norm(new_U - self.U)
             if self.verbose:
-                print(f"it {it+1}: delta={delta:.6f}, J={J:.6f}")
+                print(f"[CSI-FCM] Iteration {it+1:3d} | ΔU = {delta:.6e} | J = {J:.6f}")
+                print(f"           Cluster sizes: {np.round(S, 4)} | rho_k: {np.round(rho_k, 3)}")
+                print(f"           Max change in U: {np.max(np.abs(new_U - self.U)):.4e}")
+
             if delta < self.tol:
                 if self.verbose:
-                    print("Converged.")
+                    print(f"[CSI-FCM] ✅ Converged after {it+1} iterations (ΔU < tol={self.tol}).")
                 break
+            
             self.U = new_U
         else:
             if self.verbose:
-                print(f"csiFCM did not converge in {self.maxit} iterations.")
+                print(f"[CSI-FCM] ⚠️ Not converged after {self.maxit} iterations.")
+
+        
 
     def predict(self, new_pdfs: np.ndarray):
         """Membership for new pdfs."""

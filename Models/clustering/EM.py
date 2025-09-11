@@ -52,7 +52,7 @@ class Model:
         self.gamma = gamma
 
         self.pdf_matrix = None
-        self.centroids = None
+        self.Theta = None
         self.responsibilities = None
         self.cluster_priors = None
 
@@ -62,7 +62,7 @@ class Model:
 
         num_pdfs = self.pdf_matrix.shape[0]
         return np.array([
-            [getattr(d_obj, self.distance_metric)(self.pdf_matrix[i], self.centroids[j])**2 + 1e-10
+            [getattr(d_obj, self.distance_metric)(self.pdf_matrix[i], self.Theta[j])**2 + 1e-10
              for j in range(self.num_clusters)]
             for i in range(num_pdfs)
         ])
@@ -73,7 +73,7 @@ class Model:
             weights = self.responsibilities[:, j]
             numerator = np.sum(weights[:, np.newaxis] * self.pdf_matrix, axis=0)
             denominator = np.sum(weights) + 1e-12
-            self.centroids[j, :] = numerator / denominator
+            self.Theta[j, :] = numerator / denominator
 
     def _update_cluster_priors(self) -> None:
         """Cập nhật trọng số cụm (priors)."""
@@ -95,7 +95,7 @@ class Model:
 
         # Khởi tạo centroids từ dữ liệu
         init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
-        self.centroids = pdf_matrix[init_indices, :].copy()
+        self.Theta = pdf_matrix[init_indices, :].copy()
 
         # Khởi tạo cluster priors
         self.cluster_priors = np.ones(self.num_clusters) / self.num_clusters
@@ -111,7 +111,7 @@ class Model:
             if self.verbose:
                 print("  ➤ M-step ")
                 print(f"    - Cluster priors: {np.round(self.cluster_priors, 4)}")
-                cent_norms = [np.linalg.norm(c) for c in self.centroids]
+                cent_norms = [np.linalg.norm(c) for c in self.Theta]
                 print(f"    - Centroid norms: {[f'{n:.4f}' for n in cent_norms]}")
 
             # E-step
@@ -146,7 +146,7 @@ class Model:
 
         soft_assignments = []
         for pdf in new_pdfs:
-            dists = np.array([func(pdf, c)**2 + 1e-10 for c in self.centroids])
+            dists = np.array([func(pdf, c)**2 + 1e-10 for c in self.Theta])
             probs = self.cluster_priors * np.exp(-dists)
             probs /= np.sum(probs)
             soft_assignments.append(probs)
@@ -155,7 +155,7 @@ class Model:
 
     def get_results(self):
         """Trả về responsibilities, centroids, cluster_priors."""
-        return self.responsibilities.T.copy(), self.centroids.copy(), self.cluster_priors.copy()
+        return self.responsibilities.T.copy(), self.Theta.copy(), self.cluster_priors.copy()
 
     def get_hard_assignments(self) -> np.ndarray:
         """Trả về nhãn cứng cho từng PDF."""

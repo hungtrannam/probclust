@@ -56,72 +56,6 @@ class Model:
         self.Theta = None          # (K, G)
         self.obj_hist = []
 
-    # ------------------------- DIST^2 tới các tâm -------------------------
-    
-
-
-    # def _init_centroids_farthest(self):
-    #     dobj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
-    #     func = getattr(dobj, self.distance_metric)
-
-    #     N = self.num_pdfs; K = self.num_clusters
-    #     idx0 = np.random.randint(N)
-    #     centers = [idx0]
-
-    #     def d2_to_center(x, c):
-    #         d = func(x, self.pdf_matrix[c]) + 1e-30
-    #         return d*d
-
-    #     # khoảng cách bình phương tới tập center hiện tại
-    #     d2_min = np.array([d2_to_center(self.pdf_matrix[i], idx0) for i in range(N)])
-    #     for _ in range(1, K):
-    #         idx = int(np.argmax(d2_min))
-    #         centers.append(idx)
-    #         # cập nhật d2_min
-    #         d2_new = np.array([d2_to_center(self.pdf_matrix[i], idx) for i in range(N)])
-    #         d2_min = np.minimum(d2_min, d2_new)
-
-    #     self.Theta = self.pdf_matrix[centers].copy()
-
-    # ------------------------------------------------------------------
-    # Hàm hỗ trợ cho W2 (1D)
-    # ------------------------------------------------------------------
-    # @staticmethod
-    # def _cdf_from_pdf(pdf: np.ndarray, dx: float) -> np.ndarray:
-    #     cdf = np.cumsum(pdf) * dx
-    #     Z = float(cdf[-1]) if cdf.size else 1.0
-    #     if Z <= 0:
-    #         n = pdf.size
-    #         return np.linspace(0.0, 1.0, n)
-    #     return cdf / Z
-
-    # def _update_centroids_w2(self) -> None:
-    #     """Cập nhật tâm cụm bằng Wasserstein-2 barycenter (1D)."""
-    #     assert self.Dim == 1, "W2 barycenter chỉ hỗ trợ 1D."
-    #     dx = float(self.grid_x[1] - self.grid_x[0])
-    #     n_samples, m = self.pdf_matrix.shape
-    #     K = self.num_clusters
-
-    #     t_grid = np.linspace(0.0, 1.0, m)
-    #     inv_mat = np.empty((n_samples, m))  # (N, m)
-
-    #     for j in range(n_samples):
-    #         cdf_j = self._cdf_from_pdf(self.pdf_matrix[j], dx)
-    #         inv_mat[j] = np.interp(t_grid, cdf_j, self.grid_x)
-
-    #     W = self.U ** self.fuzziness              # (K, N)
-    #     denom = np.sum(W, axis=1, keepdims=True) + 1e-12  # (K, 1)
-    #     W_norm = W / denom                         # (K, N)
-
-    #     Theta = np.empty((K, m))
-    #     for k in range(K):
-    #         Qk = (W_norm[k][:, None] * inv_mat).sum(axis=0)     # (m,)
-    #         Qk = np.maximum.accumulate(Qk)
-    #         Fk = np.interp(self.grid_x, Qk, t_grid, left=0.0, right=1.0)
-    #         fk = np.gradient(Fk, self.grid_x)
-    #         Theta[k] = np.clip(fk, 0.0, None)
-
-    #     self.Theta = Theta  # (K, m)
 
     # --------------------------- cập nhật θ theo (37) ---------------------------
     def _update_centroids(self) -> None:
@@ -141,7 +75,7 @@ class Model:
             tj = Theta[j]
             for i in range(N):
                 d = func(self.pdf_matrix[i], tj) + 1e-30
-                D2[j, i] = d**2  # dùng khoảng cách bình phương
+                D2[j, i] = d**2 
         return D2  # (K, N)
 
     # --------------------------- D* theo (27): (K, N) ---------------------------

@@ -1,180 +1,179 @@
 import numpy as np
-from utils.dist import Dist
-
+from utils.dist import Dist  # Khoảng cách giữa các hàm mật độ
 
 class Model:
-    """
-    SiiFCM: Size-Insensitive Integrity-based Fuzzy C-Means Clustering
-    Áp dụng cho hàm mật độ xác suất (PDFs) theo Lin et al. (2014).
-    """
-
     def __init__(
-        self,
-        grid_x: np.ndarray,
-        num_clusters: int = 3,
-        fuzziness: float = 2.0,
-        max_iterations: int = 100,
-        tolerance: float = 1e-5,
-        distance_metric: str = "L1",
-        bandwidth: float = 0.01,
-        Dim: int = 1,
-        seed: int = None,
-        verbose: bool = False,
-    ):
+            self, 
+            grid_x, 
+            num_clusters=3, 
+            fuzziness=2.0, 
+            tolerance=1e-5, 
+            max_iterations=100, 
+            bandwidth=0.01,
+            distance_metric="L2", 
+            Dim=None,
+            seed=None, 
+            verbose=False
+        ):
+        
         self.grid_x = grid_x
         self.num_clusters = num_clusters
         self.fuzziness = fuzziness
-        self.max_iterations = max_iterations
         self.tolerance = tolerance
-        self.distance_metric = distance_metric
+        self.max_iterations = max_iterations
         self.bandwidth = bandwidth
+        self.metric = distance_metric
         self.seed = seed
         self.verbose = verbose
-        self.Dim = Dim
+        self.Dim = Dim if Dim is not None else 1  # mặc định 1D PDF
 
         self.pdf_matrix = None
-        self.Theta = None
-        self.U = None
-        self.objective_history = []
-
-    def _l1(self, a, b):
-        dist = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
-        return dist.L1(a, b) + 1e-10
+        self.Theta = None  # centroids
+        self.U = None      # soft membership
+        self.W = None      # fuzzy weights
+        self.Comp = None   # integrity
+        self.P = None      # separation
+        self.rho = None
+        self.I_star = None
+        self.obj = []
 
     def _dist_matrix(self):
-        dist = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
-        func = getattr(dist, self.distance_metric)
-        N, K = self.pdf_matrix.shape[0], self.num_clusters
-        D2 = np.zeros((N, K))
+        """Tính khoảng cách bình phương giữa từng điểm và centroid: D_ik = ||x_i - θ_k||²"""
+        d_obj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
+        func = getattr(d_obj, self.metric)
+
+        N = self.pdf_matrix.shape[0]
+        D = np.zeros((self.num_pdfs, self.num_clusters))
         for i in range(N):
-            for j in range(K):
-                D2[i, j] = func(self.pdf_matrix[i], self.Theta[j]) ** 2 + 1e-10
-        return D2
+            for k in range(self.num_clusters):
+                D[i, k] = func(self.pdf_matrix[i], self.Theta[k])**2 + 1e-10
+        return D
 
-    def _update_centroids(self):
-        Um = self.U ** self.fuzziness
-        self.Theta = (Um.T @ self.pdf_matrix) / (np.sum(Um.T, axis=1, keepdims=True) + 1e-12)
-
-    def _compute_compactness(self, A_idx, Theta_j):
-        if len(A_idx) == 0:
-            return 0.0
-        dists = [self._l1(self.pdf_matrix[i], Theta_j) for i in A_idx]
-        return 1.0 - np.std(dists)
-
-    def _compute_purity(self, i, A_idx):
-        purity = []
-        for idx in A_idx:
-            xi = self.pdf_matrix[idx]
-            vi = self.Theta[i]
-            other_idx = [j for j in range(self.num_clusters) if j != i]
-            vj = self.Theta[min(other_idx, key=lambda j: self._l1(vi, self.Theta[j]))]
-            d1 = self._l1(xi, vi)
-            d2 = self._l1(xi, vj)
-            dp = self._l1(vi, vj)
-            pij = np.abs(d1 - d2) / (dp + 1e-10)
-            purity.append(pij)
-        return np.mean(purity) if len(purity) > 0 else 0.0
-
-    def _compute_integrity(self, clusters):
-        C, P = [], []
-        for i in range(self.num_clusters):
-            A_idx = clusters[i]
-            C.append(self._compute_compactness(A_idx, self.Theta[i]))
-            P.append(self._compute_purity(i, A_idx))
-        I = [(c + p) / 2 for c, p in zip(C, P)]
-        I_min, I_max = min(I), max(I)
-        I_norm = [(ii - I_min) / (I_max - I_min + 1e-10) for ii in I]
-        return I_norm, P
-
-    def _compute_condition_W(self, D2, clusters):
-        N, K = D2.shape
-        cluster_sizes = np.array([len(clusters[k]) for k in range(K)])
-        S = cluster_sizes / np.sum(cluster_sizes)
-        F = (1 - S) / (1 - np.min(S) + 1e-10)
-        I_norm, _ = self._compute_integrity(clusters)
-
-        W = np.zeros((N, K))
-        for i in range(N):
-            for j in range(K):
-                if j not in clusters or len(clusters[j]) == 0:
-                    W[i, j] = F[j]
-                else:
-                    vi = self.Theta[j]
-                    other = min(
-                        [jj for jj in range(K) if jj != j],
-                        key=lambda t: self._l1(vi, self.Theta[t])
-                    )
-                    d1 = self._l1(self.pdf_matrix[i], vi)
-                    d2 = self._l1(self.pdf_matrix[i], self.Theta[other])
-                    dp = self._l1(vi, self.Theta[other])
-                    pij = np.abs(d1 - d2) / (dp + 1e-10)
-                    W[i, j] = F[j] * np.exp((1 - I_norm[j]) * pij)
+    def _update_membership(self, D, U):
+        """Cập nhật ma trận membership W dựa trên D và U."""
+        self.num_pdfs, self.num_clusters = D.shape
+        W = np.zeros_like(D)
+        for k in range(self.num_clusters):
+            denom = np.zeros(self.num_pdfs)
+            for k1 in range(self.num_clusters):
+                denom += (D[:, k] / D[:, k1]) ** (1 / (self.fuzziness - 1))
+            W[:, k] = U[:, k] * (1.0 / (denom + 1e-10))
         return W
-
-    def _update_membership(self, D2, W):
-        m = self.fuzziness
-        N, K = D2.shape
-        U_new = np.zeros((N, K))
-        for i in range(N):
-            for j in range(K):
-                denom = sum([(D2[i, j] / D2[i, k]) ** (1 / (m - 1)) for k in range(K)])
-                U_new[i, j] = W[i, j] / (denom + 1e-10)
-        return U_new
 
     def fit(self, pdf_matrix: np.ndarray):
         self.pdf_matrix = pdf_matrix
-        N, _ = pdf_matrix.shape
-        K = self.num_clusters
+        self.num_pdfs = pdf_matrix.shape[0]
+        N, K = self.num_pdfs, self.num_clusters
+        m = self.fuzziness
+
         if self.seed is not None:
             np.random.seed(self.seed)
 
-        self.U = np.random.dirichlet(np.ones(K), size=N)
-        idx_init = np.random.choice(N, K, replace=False)
-        self.Theta = pdf_matrix[idx_init]
+        # Khởi tạo U = ones, Theta ngẫu nhiên, W ban đầu
+        self.U = np.ones((N, K))
+        self.Theta = pdf_matrix[np.random.choice(N, K, replace=False)].copy()
+        D = self._dist_matrix()
+        self.W = self._update_membership(D, self.U)
 
         for it in range(self.max_iterations):
-            self._update_centroids()
-            D2 = self._dist_matrix()
-            hard_labels = np.argmax(self.U, axis=1)
-            clusters = {k: np.where(hard_labels == k)[0].tolist() for k in range(K)}
+            # Cập nhật nhãn cứng
+            idx = np.argmax(self.W, axis=1)
 
-            W = self._compute_condition_W(D2, clusters)
-            U_new = self._update_membership(D2, W)
+            # === Tính μ_k và Comp_k ===
+            Mu = np.zeros(K)
+            Comp = np.zeros(K)
+            for k in range(K):
+                mask = (idx == k)
+                nk = np.sum(mask)
+                if nk == 0:
+                    continue
+                sqrt_d = np.sqrt(D[mask, k])
+                Mu[k] = np.mean(sqrt_d)
+                Comp[k] = 1.0 - np.sqrt(np.mean((sqrt_d - Mu[k])**2))
+            self.Comp = Comp.copy()
 
-            obj = np.sum((U_new ** self.fuzziness) * D2)
-            self.objective_history.append(obj)
+            # === Tính p_{ki} ===
+            p = np.zeros((K, N))
+            for k in range(K):
+                min_dist = np.inf
+                j_closest = -1
+                for j in range(K):
+                    if j == k:
+                        continue
+                    dist = np.linalg.norm(self.Theta[k] - self.Theta[j])
+                    if dist < min_dist:
+                        min_dist = dist
+                        j_closest = j
+                d_kj = np.linalg.norm(self.Theta[k] - self.Theta[j_closest]) + 1e-10
+                for i in range(N):
+                    dki = np.linalg.norm(self.pdf_matrix[i] - self.Theta[k])
+                    dji = np.linalg.norm(self.pdf_matrix[i] - self.Theta[j_closest])
+                    p[k, i] = np.abs(dki - dji) / d_kj
 
-            delta = np.linalg.norm(U_new - self.U)
+            # === Tính P_k và I_star ===
+            P = np.zeros(K)
+            for k in range(K):
+                mask = (idx == k)
+                nk = np.sum(mask)
+                if nk == 0:
+                    continue
+                P[k] = np.sum(p[k, mask]) / (nk + 1e-10)
+            I = 0.5 * (Comp + P)
+            I_star = (I - I.min()) / (I.max() - I.min() + 1e-10)
+            self.I_star = I_star.copy()
+
+            # === Tính rho(i) ===
+            freq = np.bincount(idx, minlength=K) / N
+            rho = np.array([(1 - freq[idx[i]]) / (1 - freq).max() for i in range(N)])
+            self.rho = rho.copy()
+
+            # === Cập nhật U(i,k) theo công thức đóng dạng ===
+            for k in range(K):
+                p_star = np.exp((1 - I_star[k]) * p[k])
+                self.U[:, k] = p_star * self.rho
+
+            # === Cập nhật Theta(k) ===
+            for k in range(K):
+                wk = self.W[:, k] ** m
+                denom = np.sum(wk)
+                if denom == 0:
+                    continue
+                self.Theta[k] = np.sum(wk[:, None] * self.pdf_matrix, axis=0) / denom
+
+            # === Cập nhật D và W mới ===
+            D = self._dist_matrix()
+            self.W = self._update_membership(D, self.U)
+
+            # === Kiểm tra hội tụ ===
+            if it > 0:
+                delta = np.linalg.norm(self.Theta - old_Theta, ord='fro') / (np.linalg.norm(self.Theta, ord='fro') + 1e-10)
+                if delta < self.tolerance:
+                    if self.verbose:
+                        print(f"[SiiFCM] ✅ Converged at iteration {it+1}")
+                    break
+
+            # === Ghi nhận obj và lưu lại Theta để kiểm tra hội tụ ===
+            old_Theta = self.Theta.copy()
+            obj = np.sum((self.W ** m) * D)
+            self.obj.append(obj)
+
             if self.verbose:
-                print(f"[{it:02d}] ΔU = {delta:.5f}, Obj = {obj:.5f}")
-            if delta < self.tolerance:
-                break
+                print(f"[SiiFCM] Iter {it+1} | Obj = {obj:.6f} | Comp = {np.round(self.Comp, 3)}")
 
-            self.U = U_new
-
-    def predict(self, pdfs: np.ndarray) -> np.ndarray:
-        dist = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
-        func = getattr(dist, self.distance_metric)
-
-        if pdfs.ndim == 1:
-            pdfs = pdfs[None, :]
-
-        N, K = pdfs.shape[0], self.num_clusters
-        D2 = np.zeros((N, K))
-        for i in range(N):
-            for j in range(K):
-                D2[i, j] = func(pdfs[i], self.Theta[j]) ** 2 + 1e-10
-
-        U_pred = np.zeros((N, K))
-        m = self.fuzziness
-        for i in range(N):
-            denom = sum([(D2[i, j] / D2[i, k]) ** (1 / (m - 1)) for k in range(K)])
-            for j in range(K):
-                U_pred[i, j] = 1.0 / (denom + 1e-10)
-        return U_pred
+    
+    def predict(self, new_pdfs):
+        if new_pdfs.ndim == 1:
+            new_pdfs = new_pdfs[None, :]
+        d_obj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
+        func = getattr(d_obj, self.metric)
+        D = np.array([
+            [func(pdf, theta)**2 + 1e-10 for theta in self.Theta]
+            for pdf in new_pdfs
+        ])
+        return np.argmax(self._update_membership(D, np.ones_like(D)), axis=1)
 
     def get_results(self):
-        return self.U.T.copy(), self.Theta.copy(), self.objective_history.copy()
+        return self.W.T.copy(), self.Theta.copy(), self.obj.copy()
 
-    def get_hard_assignments(self) -> np.ndarray:
-        return np.argmax(self.U, axis=1)
+    def get_hard_assignments(self):
+        return np.argmax(self.W, axis=1)
