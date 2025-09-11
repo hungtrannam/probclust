@@ -1,5 +1,6 @@
 import numpy as np
 from utils.dist import Dist
+from data.data_loader import generateGauss
 
 
 class Model:
@@ -123,6 +124,9 @@ class Model:
         weights = self.membership_matrix ** self.fuzziness
         self.centroids = (weights.T @ self.pdf_matrix) / (np.sum(weights.T, axis=1, keepdims=True) + 1e-12)
         
+    def _compute_distance_pair(self, x: np.ndarray, y: np.ndarray) -> float:
+        """Khoảng cách 2 PDF theo self.distance_metric từ self._dist_obj."""
+        return float(getattr(self._dist_obj, self.distance_metric)(x, y))
 
     def _compute_distance_matrix(self) -> np.ndarray:
         """Tính ma trận khoảng cách [num_pdfs, num_clusters]."""
@@ -130,7 +134,7 @@ class Model:
 
         num_pdfs = self.pdf_matrix.shape[0]
         return np.array([
-            [getattr(d_obj, self.distance_metric)(self.pdf_matrix[i], self.centroids[j]) + 1e-10
+            [getattr(d_obj, self.distance_metric)(self.pdf_matrix[i], self.centroids[j])**2 + 1e-10
              for j in range(self.num_clusters)]
             for i in range(num_pdfs)
         ])
@@ -151,11 +155,12 @@ class Model:
             np.random.seed(self.seed)
 
         # Khởi tạo U ngẫu nhiên (mỗi hàng sum=1)
-        self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
+        self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs) 
 
         # Khởi tạo centroid từ dữ liệu
         init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
         self.centroids = pdf_matrix[init_indices, :]
+
 
         self.objective_history.clear()
 
@@ -191,7 +196,7 @@ class Model:
         memberships = []
         for pdf in new_pdfs:
             distances = np.array([
-                self._compute_distance(pdf, self.centroids[j]) + 1e-10
+                self._compute_distance_pair(pdf, self.centroids[j])**2 + 1e-10
                 for j in range(self.num_clusters)
             ])
             power = 2 / (self.fuzziness - 1)

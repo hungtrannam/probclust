@@ -50,7 +50,7 @@ class Model:
         for i in range(n_pdfs):
             for j in range(i + 1, n_pdfs):
                 d_obj = Dist(h=self.bandwidth, Dim=1, grid=self.grid_x)
-                dist_matrix[i, j] = dist_matrix[j, i] = getattr(d_obj, self.distance_metric)(pdf_matrix[i], pdf_matrix[j])
+                dist_matrix[i, j] = dist_matrix[j, i] = getattr(d_obj, self.distance_metric)(pdf_matrix[i], pdf_matrix[j])**2
         return dist_matrix
 
     def _calculate_linkage_distance(

@@ -119,7 +119,7 @@ class Model:
 
         num_pdfs = self.pdf_matrix.shape[0]
         return np.array([
-            [getattr(d_obj, self.distance_metric)(self.pdf_matrix[i], self.centroids[j]) + 1e-10
+            [getattr(d_obj, self.distance_metric)(self.pdf_matrix[i], self.centroids[j])**2 + 1e-10
              for j in range(self.num_clusters)]
             for i in range(num_pdfs)
         ])

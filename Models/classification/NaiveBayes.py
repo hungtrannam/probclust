@@ -18,7 +18,7 @@ def _gaussian_kernel_on_grid(x: np.ndarray, sigma: float, dx: float):
     k = (1.0 / np.sqrt(2*np.pi*sigma**2)) * np.exp(-0.5 * (x / sigma)**2)
     return k * dx  # nhân dx để conv ≈ integral
 
-class KernelBayesGrid:
+class Model:
     """
     Kernel Bayes cho dữ liệu pdf trên lưới đều (1D).
     - Kernel: Gaussian chuẩn (có băng thông lớp h_k).

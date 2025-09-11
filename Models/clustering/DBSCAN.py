@@ -22,7 +22,7 @@ class Model:
 
     def _compute_distance(self, pdf1, pdf2):
         d_obj = Dist(h=self.bandwidth, Dim=1, grid=self.grid_x)
-        return getattr(d_obj, self.distance_metric)(pdf1,pdf2)
+        return getattr(d_obj, self.distance_metric)(pdf1,pdf2)**2
 
     def _region_query(self, idx):
         neighbors = []
