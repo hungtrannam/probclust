@@ -27,6 +27,7 @@ class Model:
         tolerance: float = 1e-5,
         distance_metric: str = "L2",   # tên method trong Dist: L1, L2, H, BC, KL, ...
         bandwidth: float = 0.01,
+        init: str = "random",  # khởi tạo tâm: random, kmeans++
         Dim: int | None = None,
         seed: int | None = None,
         verbose: bool = False,
@@ -39,6 +40,7 @@ class Model:
         self.fuzziness = float(fuzziness)
         self.maxit = int(max_iterations)
         self.tol = float(tolerance)
+        self.init = str(init)
         self.distance_metric = str(distance_metric)
         self.bandwidth = float(bandwidth)
         self.Dim = 1 if Dim is None else int(Dim)
@@ -56,15 +58,6 @@ class Model:
         self.Theta = None          # (K, G)
         self.obj_hist = []
 
-
-    # --------------------------- cập nhật θ theo (37) ---------------------------
-    def _update_centroids(self) -> None:
-        """Cập nhật tâm cụm bằng trung bình trọng số mờ (U có shape (K, N))."""
-        W = self.U ** self.fuzziness                  # (K, N)
-        num = W @ self.pdf_matrix                     # (K, G)
-        den = np.sum(W, axis=1, keepdims=True) + 1e-12  # (K, 1)
-        return num / den                        # (K, G)
-
         # ------------------------- DIST^2 tới các tâm: (K, N) -------------------------
     def _dist2_matrix_to(self, Theta):
         dobj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
@@ -74,8 +67,8 @@ class Model:
         for j in range(K):
             tj = Theta[j]
             for i in range(N):
-                d = func(self.pdf_matrix[i], tj) + 1e-30
-                D2[j, i] = d**2 
+                d = func(self.pdf_matrix[i], tj) 
+                D2[j, i] = d**2 + 1e-30
         return D2  # (K, N)
 
     # --------------------------- D* theo (27): (K, N) ---------------------------
@@ -86,67 +79,137 @@ class Model:
     
     # ------------------------- f_j (fuzzy size, từ U^{t-1}) ------------------------- 
     def _fuzzy_sizes(self, U: np.ndarray) -> np.ndarray: # U: (K, N) -> f: (K,) 
-        f = U.sum(axis=1) / float(self.num_pdfs) 
+        f = U.sum(axis=1) #/ self.num_pdfs
+        f = np.clip(f, self.eps, None, out=f)  # tránh chia 0
         return f
 
     # ------------------------- cập nhật δ_i theo (38) -------------------------
     def _update_delta_i(
         self,
-        omega_prev: np.ndarray,      # (K,)
-        D2: np.ndarray,              # (K, N)  ||x_i-θ_j^(t)||^2
-        Dstar: np.ndarray            # (K, N)  D*_{ij} @ θ^(t-1)
+        omega_prev: np.ndarray,   # (K,)   f_j
+        D2: np.ndarray,           # (K, N)  ||x_i - θ_j^(t)||^2
+        Dstar: np.ndarray         # (K, N)  D*_{ij} @ θ^(t-1)
     ) -> None:
-        m, dp = self.fuzziness, self.delta_prime
-        p = 1.0 / (m - 1.0)
+        """
+        Cập nhật delta_i theo công thức (38).
+        omega_prev: f_j (fuzzy size) (K,)
+        D2: khoảng cách bình phương (K, N)
+        Dstar: D*_{ij} (K, N)
+        """
+        m = self.fuzziness
+        K, N = D2.shape
+        eps = self.eps
+        dp = self.delta_prime
 
-        # (K, N): chú ý broadcast theo (K,1) và (1,N)
-        denom = m * np.clip(
-            D2 - omega_prev[:, None] * self.delta_i[None, :] * Dstar,
-            self.eps, None
-        )
-        numer = np.clip(1.0 - dp * Dstar, self.eps, None) * omega_prev[:, None]
+        delta_new = np.zeros(N)
 
-        S = (numer / denom) ** p            # (K, N)
-        S = S.sum(axis=0) + self.eps        # (N,)  — tổng theo K cho từng mẫu i
+        for i in range(N):   # duyệt từng mẫu
+            acc = 0.0
+            for j in range(K):  # duyệt từng cụm
+                # Tử số: (1 - δ' * D*_{ij}) * f_j
+                numer = (1.0 - dp * Dstar[j, i]) * omega_prev[j]
+                numer = max(numer, eps)
 
-        delta_new = dp * (S ** (1.0 - m))   # (N,)
+                # Mẫu số: m( ||X_i - θ_j||^2 - f_j * δ_i^(t-1) * D*_{ij} )
+                denom = m * (D2[j, i] - omega_prev[j] * self.delta_i[i] * Dstar[j, i])
+                denom = max(denom, eps)
 
-        # bound theo (41)-(42), lấy min theo K cho từng i
-        bound = D2 / (omega_prev[:, None] * Dstar + self.eps)  # (K, N)
+                # Term cho cụm j
+                term = (numer / denom) ** (1.0 / (m - 1.0))
+                acc += term
+
+            # Tổng theo j, rồi mũ (1-m)
+            delta_new[i] = dp * (acc ** (1.0 - m))
+
+        # Áp dụng bound theo (41)-(42)
+        bound = D2 / (omega_prev[:, None] * Dstar + eps)  # (K, N)
         bound = np.where(np.isfinite(bound), bound, np.inf)
-        max_delta = np.min(bound, axis=0)                      # (N,)
-        max_delta = np.clip(max_delta, self.eps, 1e12)
+        max_delta = np.min(bound, axis=0)  # (N,)
+        max_delta = np.clip(max_delta, eps, 1e12)
 
+        # Cập nhật
         self.delta_i = np.clip(delta_new, 0.0, max_delta)
 
+
     # --------------------------- cập nhật θ theo (37) --------------------------- 
-    def _update_centroids(self) -> None: 
-        """Cập nhật tâm cụm bằng trung bình trọng số mờ (U có shape (K, N)).""" 
-        W = self.U ** self.fuzziness # (K, N) 
-        num = W @ self.pdf_matrix # (K, G) 
-        den = np.sum(W, axis=1, keepdims=True) + 1e-12 # (K, 1) 
-        return num / den # (K, G)
+    def _update_centroids(self) -> np.ndarray:
+        """Cập nhật tâm cụm bằng trung bình trọng số mờ (U: (K,N), X: (N,G))."""
+        W = self.U ** self.fuzziness            # (K, N)
+        num = W @ self.pdf_matrix               # (K, G)
+        den = np.sum(W, axis=1, keepdims=True)  # (K, 1)
+        return num / (den + self.eps)           # (K, G)
+
+
+    def _init_centroids_kmeanspp(self, pdf_matrix):
+        N = pdf_matrix.shape[0]
+        K = self.num_clusters
+
+        # đối tượng khoảng cách
+        dobj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
+        func = getattr(dobj, self.distance_metric)
+
+        # Nếu chỉ cần 2 centroid -> chọn 2 điểm xa nhau nhất
+        if K == 2:
+            # chọn ngẫu nhiên centroid đầu tiên
+            idx0 = np.random.randint(N)
+            d2 = np.array([
+                func(pdf_matrix[i], pdf_matrix[idx0]) ** 2
+                for i in range(N)
+            ])
+            idx1 = int(np.argmax(d2))
+            indices = [idx0, idx1]
+            return pdf_matrix[indices, :].copy()
+
+        # Trường hợp K > 2: dùng KMeans++
+        indices = [np.random.randint(N)]  # chọn ngẫu nhiên centroid đầu tiên
+
+        for _ in range(1, K):
+            # tính khoảng cách bình phương nhỏ nhất tới centroids đã chọn
+            d2 = np.array([
+                min((func(pdf_matrix[i], pdf_matrix[j]) ** 2) for j in indices)
+                for i in range(N)
+            ])
+            # chuẩn hoá thành xác suất
+            probs = d2 / (d2.sum() + 1e-12)
+            # chọn theo phân phối
+            next_idx = np.random.choice(N, p=probs)
+            indices.append(next_idx)
+
+        return pdf_matrix[indices, :].copy()
+
+
 
     # ------------------------- cập nhật U theo (35) -------------------------
     def _update_U(
         self,
         omega_prev: np.ndarray,   # (K,)
-        D2: np.ndarray,           # (K, N)
-        Dstar: np.ndarray         # (K, N)
+        D2: np.ndarray,           # (K, N) = ||X_i - θ_j||^2
+        Dstar: np.ndarray         # (K, N) = D*_{ij}
     ) -> np.ndarray:
-        """Trả về U_new (K, N) đã chuẩn hoá theo từng cột (mỗi mẫu i)."""
+        """Trả về U_new (K, N), tính tường minh theo từng mẫu i."""
         m, dp = self.fuzziness, self.delta_prime
         p = 1.0 / (m - 1.0)
+        K, N = D2.shape
 
-        numer = np.clip(1.0 - dp * Dstar, self.eps, None) * omega_prev[:, None]  # (K, N)
-        denom = np.clip(
-            D2 - omega_prev[:, None] * self.delta_i[None, :] * Dstar,
-            self.eps, None
-        )  # (K, N)
+        U_new = np.zeros((K, N))
 
-        base = (numer / denom) ** p                                           # (K, N)
-        base_norm = base / (base.sum(axis=0, keepdims=True)** p + self.eps)       # (K, N)
-        return base_norm
+        for i in range(N):
+            denom_total = 0.0
+            numerators = []
+            for j in range(K):
+                # tử số: (1 - δ' * D*_{ij}) * f_j
+                numer = (1.0 - dp * Dstar[j, i]) * omega_prev[j]
+                # mẫu số: ||X_i - θ_j||^2 - f_j * δ_i * D*_{ij}
+                denom = D2[j, i] - omega_prev[j] * self.delta_i[i] * Dstar[j, i]
+                value = (numer / denom) ** p
+                numerators.append(value)
+                denom_total += value
+            # chuẩn hóa lại
+            for j in range(K):
+                U_new[j, i] = numerators[j] / (denom_total + self.eps)
+
+        return U_new
+
 
     # ---------------------------- mục tiêu J theo (26) ----------------------------
     def _objective(
@@ -167,65 +230,102 @@ class Model:
 
         return float(term_ifcm + term_edge)
 
-    # --------------------------------- fit (đồng bộ K,N) ---------------------------------
+
+    # --------------------------------- fit (K,N) ---------------------------------
     def fit(self, pdf_matrix: np.ndarray):
-        self.pdf_matrix = np.asarray(pdf_matrix, dtype=float)
-        self.num_pdfs, self.num_points = self.pdf_matrix.shape
+        # --- dữ liệu & kích thước ---
+        X = np.asarray(pdf_matrix, dtype=float)
+        self.pdf_matrix  = X
+        self.num_pdfs, self.num_points = X.shape
+        N = self.num_pdfs
+        K = self.num_clusters
+        eps = self.eps
 
-        if self.seed is not None:
-            np.random.seed(self.seed)
+        # --- RNG (tôn trọng seed) ---
+        rng = np.random.default_rng(self.seed)
 
-        # init
-        self.U = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs).T  # (N, K)
-        init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
-        self.Theta = pdf_matrix[init_indices, :].copy()  # (K, G)
-        self.delta_i = np.zeros(self.num_pdfs, dtype=float)
+        # --- init U ngẫu nhiên rồi chuẩn hoá theo cột ---
+        self.U = rng.random((K, N), dtype=float)
+        self.U = self.U / (self.U.sum(axis=0, keepdims=True) + eps)
+        
+
+        # --- init Θ (kmeans++ với farthest pair cho K=2 trong hàm của bạn) ---
+        if self.init == "random":
+            indices = rng.choice(N, size=K, replace=False)
+            self.Theta = X[indices, :].copy()
+        else:  # kmeans++
+            self.Theta = self._init_centroids_kmeanspp(X)
+
+        # --- init δ_i ---
+        self.delta_i = np.zeros(N, dtype=float)
+
+        # -------------------- WARM-UP (dùng Θ^0 để có U^1) --------------------
+        # D* dùng Θ^0
+        D2_prev    = self._dist2_matrix_to(self.Theta)   # (K,N)  khoảng cách tới Θ^0
+        Dstar_prev = self._D_star(D2_prev)                # (K,N)  D* @ Θ^0
+
+        # f_j từ U^0: f_j = (1/N) * sum_i u_{ij}^m
+        omega_prev = self._fuzzy_sizes(self.U)           # (K,)
+        # δ_i^1 theo công thức trong paper (có hệ số m ở mẫu số)
+        self._update_delta_i(omega_prev, D2_prev, Dstar_prev)
+
+        # U^1 (dùng Θ^0)
+        self.U = self._update_U(omega_prev, D2_prev, Dstar_prev)
+
+        # Θ^1 (từ U^1)
+        self.Theta = self._update_centroids()
+
+        # ------------------- vòng lặp EM-IFCM chính -------------------
         self.obj_hist = []
         J_prev = None
 
         for it in range(1, self.maxit + 1):
-            Theta_prev = self.Theta.copy()
+            Theta_tm1 = self.Theta.copy()                # Θ^{t-1}
 
-            # (37)
-            self.Theta = self._update_centroids()  # dùng U^{t-1} -> Θ^{t}
+            # (37) Θ^t từ U^{t-1}
+            self.Theta = self._update_centroids()        # dùng self.U hiện tại
 
             # D* dùng Θ^{t-1}
-            D2_prev = self._dist2_matrix_to(Theta_prev)  # (K, N)
-            Dstar   = self._D_star(D2_prev)              # (K, N)
+            D2_prev    = self._dist2_matrix_to(Theta_tm1)
+            Dstar_prev = self._D_star(D2_prev)
 
-            # khoảng cách tới Θ^{t}
-            D2_now  = self._dist2_matrix_to(self.Theta)  # (K, N)
+            # Khoảng cách tới Θ^t
+            D2_now     = self._dist2_matrix_to(self.Theta)
 
-            # f (omega) từ U^{t-1}
-            omega_prev = self._fuzzy_sizes(self.U)       # (K,)
+            # f_j từ U^{t-1} (đã chia N)
+            omega_prev = self._fuzzy_sizes(self.U)
 
-            # (38) δ_i
-            self._update_delta_i(omega_prev, D2_now, Dstar)
+            # (38) δ_i^t
+            self._update_delta_i(omega_prev, D2_now, Dstar_prev)
 
-            # (35) U^{t}
-            U_new = self._update_U(omega_prev, D2_now, Dstar)  # (K, N)
+            # (35) U^t
+            U_new = self._update_U(omega_prev, D2_now, Dstar_prev)
 
-            # J^{t} với f từ U^{t}
-            omega_curr = self._fuzzy_sizes(U_new)        # (K,)
-            J = self._objective(U_new, omega_curr, D2_now, Dstar)
+            # J^t với f từ U^t
+            omega_curr = self._fuzzy_sizes(U_new)
+            J = self._objective(U_new, omega_curr, D2_now, Dstar_prev)
             self.obj_hist.append(J)
 
-            dU = np.linalg.norm(U_new - self.U)
-            dTheta = np.linalg.norm(self.Theta - Theta_prev)
-            dJ = abs(J - J_prev) if J_prev is not None else np.inf
+            # hội tụ
+            dU     = float(np.linalg.norm(U_new - self.U))
+            dTheta = float(np.linalg.norm(self.Theta - Theta_tm1))
+            dJ     = abs(J - J_prev) if J_prev is not None else np.inf
 
             if self.verbose:
-                print(f"[EM-IFCM] it={it:03d} | dU={dU:.3e} | dTheta={dTheta:.3e} | ΔJ={dJ:.3e} | J={J:.6e}")
+                print(f"[EM-IFCM] it={it:03d} | dU={dU:.3e} | dTheta={dTheta:.3e} | ΔJ={dJ:.3e} | J={J:.6e} | Omega={omega_curr} | δ_i=[{self.delta_i.min():.3e}, {self.delta_i.max():.3e}]")
 
+            # Cập nhật trạng thái
             self.U = U_new
             J_prev = J
 
+            # Điều kiện dừng (ưu tiên ΔJ; có thể thêm dU,dTheta nếu muốn)
             if dJ < self.tol:
                 if self.verbose:
                     print("Converged by ΔJ.")
                 break
 
         return self
+
 
     # -------------------------------- predict (đồng bộ K,N) --------------------------------
     def predict(self, new_pdfs: np.ndarray) -> np.ndarray:

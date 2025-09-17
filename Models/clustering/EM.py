@@ -15,6 +15,7 @@ class Model:
         tolerance: float = 1e-5,
         distance_metric: str = "L2",
         bandwidth: float = 0.01,
+        init: str = 'kmeans++',
         gamma: float = 0.1,
         seed: int = None,
         Dim=None,
@@ -46,6 +47,7 @@ class Model:
         self.tolerance = tolerance
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
+        self.init = init
         self.seed = seed
         self.Dim = Dim if Dim is not None else 1
         self.verbose = verbose
@@ -80,6 +82,43 @@ class Model:
         self.cluster_priors = np.sum(self.responsibilities, axis=0) / self.pdf_matrix.shape[0]
 
 
+    def _init_centroids_kmeanspp(self, pdf_matrix):
+        N = pdf_matrix.shape[0]
+        K = self.num_clusters
+
+        # đối tượng khoảng cách
+        dobj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
+        func = getattr(dobj, self.distance_metric)
+
+        # Nếu chỉ cần 2 centroid -> chọn 2 điểm xa nhau nhất
+        if K == 2:
+            # chọn ngẫu nhiên centroid đầu tiên
+            idx0 = np.random.randint(N)
+            d2 = np.array([
+                func(pdf_matrix[i], pdf_matrix[idx0]) ** 2
+                for i in range(N)
+            ])
+            idx1 = int(np.argmax(d2))
+            indices = [idx0, idx1]
+            return pdf_matrix[indices, :].copy()
+
+        # Trường hợp K > 2: dùng KMeans++
+        indices = [np.random.randint(N)]  # chọn ngẫu nhiên centroid đầu tiên
+
+        for _ in range(1, K):
+            # tính khoảng cách bình phương nhỏ nhất tới centroids đã chọn
+            d2 = np.array([
+                min((func(pdf_matrix[i], pdf_matrix[j]) ** 2) for j in indices)
+                for i in range(N)
+            ])
+            # chuẩn hoá thành xác suất
+            probs = d2 / (d2.sum() + 1e-12)
+            # chọn theo phân phối
+            next_idx = np.random.choice(N, p=probs)
+            indices.append(next_idx)
+
+        return pdf_matrix[indices, :].copy()
+
     def fit(self, pdf_matrix: np.ndarray) -> None:
         """Huấn luyện EM."""
         
@@ -91,14 +130,17 @@ class Model:
             np.random.seed(self.seed)
 
         # Khởi tạo responsibilities
-        self.responsibilities = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs)
+        self.responsibilities = np.random.rand(self.num_pdfs, self.num_clusters)
+        self.responsibilities /= np.sum(self.responsibilities, axis=1, keepdims=True)
+
 
         # Khởi tạo centroids từ dữ liệu
-        init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
-        self.Theta = pdf_matrix[init_indices, :].copy()
+        if self.init:
+            self.Theta = self._init_centroids_kmeanspp(pdf_matrix)
+        else:
+            random_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
+            self.Theta = pdf_matrix[random_indices, :].copy()
 
-        # Khởi tạo cluster priors
-        self.cluster_priors = np.ones(self.num_clusters) / self.num_clusters
 
         for iteration in range(self.max_iterations):
             if self.verbose:
