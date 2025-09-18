@@ -68,7 +68,7 @@ class Model:
             tj = Theta[j]
             for i in range(N):
                 d = func(self.pdf_matrix[i], tj) 
-                D2[j, i] = d**2 + 1e-30
+                D2[j, i] = d**2 + self.eps
         return D2  # (K, N)
 
     # --------------------------- D* theo (27): (K, N) ---------------------------
@@ -79,7 +79,7 @@ class Model:
     
     # ------------------------- f_j (fuzzy size, từ U^{t-1}) ------------------------- 
     def _fuzzy_sizes(self, U: np.ndarray) -> np.ndarray: # U: (K, N) -> f: (K,) 
-        f = U.sum(axis=1) #/ self.num_pdfs
+        f = U.sum(axis=1) / (sum(U.sum(axis=1)) + self.eps)  # (K,)
         f = np.clip(f, self.eps, None, out=f)  # tránh chia 0
         return f
 
@@ -119,7 +119,7 @@ class Model:
                 acc += term
 
             # Tổng theo j, rồi mũ (1-m)
-            delta_new[i] = dp * (acc ** (1.0 - m))
+            delta_new[i] = dp * (acc ** (1-m))   # instead of (1.0 - m)
 
         # Áp dụng bound theo (41)-(42)
         bound = D2 / (omega_prev[:, None] * Dstar + eps)  # (K, N)
@@ -219,112 +219,89 @@ class Model:
         D2_now: np.ndarray,          # (K, N)
         Dstar_prev: np.ndarray,      # (K, N)
     ) -> float:
-        m = self.fuzziness
-        U_m = U_curr ** m  # (K, N)
 
         # IFCM term: sum_{i,j} (1/f_j) u_{ij}^m ||x_i-θ_j||^2
-        term_ifcm = np.sum(U_m * (D2_now / (omega_curr[:, None] + self.eps)))
+        term_ifcm = np.sum((U_curr**self.fuzziness) * (D2_now / (omega_curr[:, None] + self.eps)))
 
         # Edge term: sum_i δ_i sum_j u_{ij}(1 - u_{ij}^{m-1}) D*_{ij}
-        term_edge = np.sum(self.delta_i[None, :] * U_curr * (1.0 - U_curr ** (m - 1.0)) * Dstar_prev)
+        term_edge = np.sum(self.delta_i[None, :] * U_curr * (1.0 - U_curr ** (self.fuzziness - 1.0)) * Dstar_prev)
 
-        return float(term_ifcm + term_edge)
+        return float(term_ifcm + term_edge), term_ifcm, term_edge
 
 
     # --------------------------------- fit (K,N) ---------------------------------
     def fit(self, pdf_matrix: np.ndarray):
-        # --- dữ liệu & kích thước ---
         X = np.asarray(pdf_matrix, dtype=float)
-        self.pdf_matrix  = X
+        self.pdf_matrix = X
         self.num_pdfs, self.num_points = X.shape
-        N = self.num_pdfs
-        K = self.num_clusters
+        N, K = self.num_pdfs, self.num_clusters
         eps = self.eps
 
-        # --- RNG (tôn trọng seed) ---
         rng = np.random.default_rng(self.seed)
 
-        # --- init U ngẫu nhiên rồi chuẩn hoá theo cột ---
-        self.U = rng.random((K, N), dtype=float)
-        self.U = self.U / (self.U.sum(axis=0, keepdims=True) + eps)
-        
-
-        # --- init Θ (kmeans++ với farthest pair cho K=2 trong hàm của bạn) ---
-        if self.init == "random":
-            indices = rng.choice(N, size=K, replace=False)
-            self.Theta = X[indices, :].copy()
-        else:  # kmeans++
-            self.Theta = self._init_centroids_kmeanspp(X)
-
-        # --- init δ_i ---
+        # Step 1–2: init δ_i = 0, init U (normalize over clusters per sample), init Θ^0 from U^0
         self.delta_i = np.zeros(N, dtype=float)
+        self.U = rng.random((K, N), dtype=float)
+        self.U /= (self.U.sum(axis=0, keepdims=True) + eps)
 
-        # -------------------- WARM-UP (dùng Θ^0 để có U^1) --------------------
-        # D* dùng Θ^0
-        D2_prev    = self._dist2_matrix_to(self.Theta)   # (K,N)  khoảng cách tới Θ^0
-        Dstar_prev = self._D_star(D2_prev)                # (K,N)  D* @ Θ^0
+        if self.init == "random":
+            self.Theta = X[rng.choice(N, size=K, replace=False), :].copy()
+        else:
+            self.Theta = self._init_centroids_kmeanspp(X)
+        import matplotlib.pyplot as plt
+        plt.figure()
+        plt.title("Khởi tạo tâm kmeans++")
+        for j in range(K):
+            plt.plot(self.grid_x, self.Theta[j], label=f'Centroid {j}')
+        plt.show()
 
-        # f_j từ U^0: f_j = (1/N) * sum_i u_{ij}^m
-        omega_prev = self._fuzzy_sizes(self.U)           # (K,)
-        # δ_i^1 theo công thức trong paper (có hệ số m ở mẫu số)
-        self._update_delta_i(omega_prev, D2_prev, Dstar_prev)
-
-        # U^1 (dùng Θ^0)
-        self.U = self._update_U(omega_prev, D2_prev, Dstar_prev)
-
-        # Θ^1 (từ U^1)
+        # replace initial Θ by centroid update from U^0 to strictly follow Θ^0 = argmin J(·|U^0)
         self.Theta = self._update_centroids()
 
-        # ------------------- vòng lặp EM-IFCM chính -------------------
         self.obj_hist = []
-        J_prev = None
+        J_prev = np.inf
 
         for it in range(1, self.maxit + 1):
-            Theta_tm1 = self.Theta.copy()                # Θ^{t-1}
+            # --- E-step : U^{t-1}  →  Θ^t ---
+            Theta_new = self._update_centroids()          # (K,G)  (dùng U^{t-1})
 
-            # (37) Θ^t từ U^{t-1}
-            self.Theta = self._update_centroids()        # dùng self.U hiện tại
+            # D* theo Θ^{t-1} (Eq.27)  – cần cache Θ_prev trước khi ghi đè
+            D2_prev = self._dist2_matrix_to(self.Theta)   # (K,N)
+            Dstar_prev = self._D_star(D2_prev)            # (K,N)
 
-            # D* dùng Θ^{t-1}
-            D2_prev    = self._dist2_matrix_to(Theta_tm1)
-            Dstar_prev = self._D_star(D2_prev)
+            # Khoảng cách mới với Θ^t
+            D2_now = self._dist2_matrix_to(Theta_new)     # (K,N)
 
-            # Khoảng cách tới Θ^t
-            D2_now     = self._dist2_matrix_to(self.Theta)
+            # Cập nhật δ_i^t  (dùng Θ^t và D*^{t-1})
+            f_prev = self._fuzzy_sizes(self.U)            # (K,)  từ U^{t-1}
+            self._update_delta_i(f_prev, D2_now, Dstar_prev)
 
-            # f_j từ U^{t-1} (đã chia N)
-            omega_prev = self._fuzzy_sizes(self.U)
+            # --- M-step : U^t ---
+            U_new = self._update_U(f_prev, D2_now, Dstar_prev)  # (K,N)
 
-            # (38) δ_i^t
-            self._update_delta_i(omega_prev, D2_now, Dstar_prev)
+            # --- Tính đúng J(U^t, Θ^t) ---
+            f_curr = self._fuzzy_sizes(U_new)             # (K,)  từ U^t
+            J, term_ifcm, term_edge = self._objective(U_new, f_curr, D2_now, Dstar_prev)
 
-            # (35) U^t
-            U_new = self._update_U(omega_prev, D2_now, Dstar_prev)
-
-            # J^t với f từ U^t
-            omega_curr = self._fuzzy_sizes(U_new)
-            J = self._objective(U_new, omega_curr, D2_now, Dstar_prev)
             self.obj_hist.append(J)
 
-            # hội tụ
-            dU     = float(np.linalg.norm(U_new - self.U))
-            dTheta = float(np.linalg.norm(self.Theta - Theta_tm1))
-            dJ     = abs(J - J_prev) if J_prev is not None else np.inf
+            # --- Đánh giá hội tụ ---
+            dU   = float(np.linalg.norm(U_new - self.U))
+            dTh  = float(np.linalg.norm(Theta_new - self.Theta))
+            dJ   = abs(J - J_prev) if np.isfinite(J_prev) else np.inf
 
             if self.verbose:
-                print(f"[EM-IFCM] it={it:03d} | dU={dU:.3e} | dTheta={dTheta:.3e} | ΔJ={dJ:.3e} | J={J:.6e} | Omega={omega_curr} | δ_i=[{self.delta_i.min():.3e}, {self.delta_i.max():.3e}]")
+                print(f"[EM-IFCM] it={it:03d} | dU={dU:.3e} | dΘ={dTh:.3e} | "
+                      f"ΔJ={dJ:.3e} | J={J:.6e} | edge={term_edge:.3e} | IFCM={term_ifcm:.3e}")
 
-            # Cập nhật trạng thái
-            self.U = U_new
+            # Cam kết bước t
+            self.U, self.Theta = U_new, Theta_new
             J_prev = J
 
-            # Điều kiện dừng (ưu tiên ΔJ; có thể thêm dU,dTheta nếu muốn)
             if dJ < self.tol:
                 if self.verbose:
                     print("Converged by ΔJ.")
                 break
-
-        return self
 
 
     # -------------------------------- predict (đồng bộ K,N) --------------------------------
