@@ -61,37 +61,47 @@ class Model:
                 D2[j, i] = d**2 + self.eps
         return D2
 
-    # --------- f_j (fuzzy size) ---------
-    # def _fuzzy_sizes(self, U):
-    #     """
-    #     Tính f_j (ω_j) theo Liu 2017 nhưng dùng hard assignment.
-    #     - U: (K,N)
-    #     - Trả về: ω (K,)
-    #     """
-    #     # Hard assignment
-    #     labels = np.argmax(U, axis=0)   # (N,)
-    #     nj = np.array([(labels == j).sum() for j in range(self.K)], dtype=float)  # (K,)
-    #     n = nj.sum()
 
-    #     # Tỉ lệ cụm
-    #     ratio = nj / (n + self.eps)   # (K,)
 
-    #     # Công thức ω_j
-    #     denom = 1.0 - np.min(ratio)
-    #     omega = (1.0 - ratio) / (denom + self.eps)
-
-    #     return omega
-    def _fuzzy_sizes(self, U: np.ndarray) -> np.ndarray: # U: (K, N) -> f: (K,) 
-        f = U.sum(axis=1) / (sum(U.sum(axis=1)) + self.eps)  # (K,)
-        f = np.clip(f, self.eps, None, out=f)  # tránh chia 0
+    
+    # ------------------------- f_j (fuzzy size) ------------------------- 
+    def _fuzzy_sizes(self, U_t_1: np.ndarray) -> np.ndarray:
+        f = U_t_1.sum(axis=1) / self.N  # (K,)
         return f
 
-    # --------- cập nhật θ ---------
-    def _update_centroids(self, U):
-        W = U ** self.m
-        num = W @ self.pdf_matrix
-        den = np.sum(W, axis=1, keepdims=True)
-        return num / (den + self.eps)
+    # --------------------------- cập nhật θ theo (37) --------------------------- 
+    def _update_centroids(self, U) -> np.ndarray:
+        W = U ** self.m  # (K, N)
+
+        centroids = []
+        for k in range(self.K):
+            weights = W[k][:, None, None] if self.Dim == 2 else W[k][:, None]  # (N,1,1) or (N,1)
+            den = np.sum(weights) + self.eps
+
+
+            if self.distance_metric == 'H':
+                if self.Dim == 2:
+                    num = np.sum(weights * np.sqrt(self.pdf_matrix), axis=0)  # (h,w)
+                else:
+                    num = np.sum(weights * np.sqrt(self.pdf_matrix), axis=0)  # (G,)
+
+                theta = (num / den) ** 2
+            elif self.distance_metric in ['L2', 'L1']:
+                if self.Dim == 2:
+                    num = np.sum(weights * self.pdf_matrix, axis=0)  # (h,w)
+                else:
+                    num = np.sum(weights * self.pdf_matrix, axis=0)  # (G,)
+                    
+                theta = num / den
+            else:
+                raise NotImplementedError("W2 chưa hỗ trợ cho 2D")
+
+            centroids.append(theta)
+
+        return np.stack(centroids, axis=0)  # (K,h,w) hoặc (K,G)
+
+
+
 
     # --------- cập nhật U ---------
     def _update_U(self, f, D2):
@@ -109,24 +119,20 @@ class Model:
     def _objective(self, U, f, D2):
         return float(np.sum((U ** self.m) * (D2 / f[:, None])))
 
-    # --------- khởi tạo θ ---------
-    def _init_centroids_kmeanspp(self, X):
-        N = X.shape[0]
-        dobj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
-        func = getattr(dobj, self.distance_metric)
-
-        indices = [np.random.randint(N)]
-        for _ in range(1, self.K):
-            d2 = np.array([min((func(X[i], X[j])**2) for j in indices) for i in range(N)])
-            probs = d2 / (d2.sum() + self.eps)
-            indices.append(np.random.choice(N, p=probs))
-        return X[indices, :].copy()
-
     # --------- fit ---------
     def fit(self, pdf_matrix):
-        X = np.asarray(pdf_matrix, dtype=float)
-        self.pdf_matrix = X
-        self.N, self.G = X.shape
+        self.pdf_matrix = np.asarray(pdf_matrix, dtype=float)
+
+        if self.pdf_matrix.ndim == 3:   # (N,h,w)
+            self.N, h, w = self.pdf_matrix.shape
+            self.pdf_shape = (h, w)
+        elif self.pdf_matrix.ndim == 2: # (N,G) 1D
+            self.N, self.G = self.pdf_matrix.shape
+            self.pdf_shape = (self.G,)
+        else:
+            raise ValueError("pdf_matrix phải (N,h,w) hoặc (N,G)")
+
+
         rng = np.random.default_rng(self.seed)
 
         # init U
@@ -136,21 +142,21 @@ class Model:
         # init Θ
         if self.init == "random":
             indices = rng.choice(self.N, size=self.K, replace=False)
-            self.Theta = X[indices, :].copy()
+            if self.pdf_matrix.ndim == 2:
+                self.Theta = self.pdf_matrix[indices, :].copy()
+            else:
+                self.Theta = self.pdf_matrix[indices,:].copy()
         else:
-            self.Theta = self._init_centroids_kmeanspp(X)
+            from utils.init import init_centroids_kmeanspp
+            self.Theta = init_centroids_kmeanspp(self.pdf_matrix, self.K, self.bandwidth,
+                                                 self.distance_metric, self.Dim, self.grid_x)
 
-        import matplotlib.pyplot as plt
-        plt.figure()
-        plt.title("Khởi tạo tâm kmeans++")
-        for j in range(self.K):
-            plt.plot(self.grid_x, self.Theta[j], label=f'Centroid {j}')
-        plt.show()
 
         self.obj_hist = []
         J_prev = None
 
         for it in range(1, self.maxit + 1):
+
             Theta_tm1 = self.Theta.copy()
 
             # bước chính

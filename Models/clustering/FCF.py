@@ -1,11 +1,17 @@
 import numpy as np
-from utils.dist import Dist
-from data.data_loader import generateGauss
-
+from utils.dist import Dist  # khoảng cách cho PDF
 
 class Model:
     """
-    Fuzzy C-Means Clustering for probability density functions (PDFs).
+    Improved Fuzzy C-Means (IFCM) cho PDF rời rạc (Liu et al. 2017).
+    - Mục tiêu:
+        J(U, Θ) = sum_{i,j} (u_{ij}^m / f_j) * ||X_i - θ_j||^2
+          với f_j = sum_i u_{ij}.
+    - Cập nhật:
+        u_{ij} ∝ (f_j / ||X_i - θ_j||^2)^(1/(m-1))
+        θ_j    = (∑ u_{ij}^m X_i) / (∑ u_{ij}^m)
+    - Không có δ_i, không có D*.
+    - U có shape (K, N).
     """
 
     def __init__(
@@ -17,157 +23,248 @@ class Model:
         tolerance: float = 1e-5,
         distance_metric: str = "L2",
         bandwidth: float = 0.01,
-        Dim=None,
-        seed: int = None,
+        init: str = "random",
+        Dim: int | None = None,
+        seed: int | None = None,
         verbose: bool = False,
+        eps: float = 1e-12,
     ):
-        """
-        Parameters
-        ----------
-        grid_x : np.ndarray
-            Lưới x để tính tích phân và khoảng cách.
-        num_clusters : int
-            Số cụm.
-        fuzziness : float
-            Hệ số m (>1).
-        max_iterations : int
-            Số vòng lặp tối đa.
-        tolerance : float
-            Ngưỡng hội tụ.
-        distance_metric : str
-            Loại khoảng cách ('L1', 'L2', 'H', 'BC', 'W2').
-        bandwidth : float
-            Bước tích phân h.
-        seed : int
-            Seed random (nếu cần).
-        verbose : bool
-            In log nếu True.
-        """
+        assert fuzziness > 1.0, "m (fuzziness) phải > 1"
         self.grid_x = grid_x
-        self.num_clusters = num_clusters
-        self.fuzziness = fuzziness
-        self.max_iterations = max_iterations
-        self.tolerance = tolerance
+        self.K = int(num_clusters)
+        self.m = float(fuzziness)
+        self.maxit = int(max_iterations)
+        self.tol = float(tolerance)
+        self.init = init
         self.distance_metric = distance_metric
         self.bandwidth = bandwidth
+        self.Dim = 1 if Dim is None else int(Dim)
         self.seed = seed
         self.verbose = verbose
-        self.Dim = Dim if Dim is not None else 1
-
+        self.eps = eps
 
         self.pdf_matrix = None
-        self.Theta = None
-        self.membership_matrix = None
-        self.objective_history = []
+        self.N = None
+        self.G = None
+        self.U = None       # (K,N)
+        self.Theta = None   # (K,G)
+        self.obj_hist = []
 
-
-
-    def _update_centroids(self) -> None:
-        """Cập nhật tâm cụm (centroid)."""
-        weights = self.membership_matrix ** self.fuzziness
-        self.Theta = (weights.T @ self.pdf_matrix) / (np.sum(weights.T, axis=1, keepdims=True) + 1e-12)
-        
-    def _dist_matrix(self):
-        """Return (N, K) distance matrix."""
+    # --------- khoảng cách bình phương (K,N) ---------
+    def _dist2_matrix_to(self, Theta):
         dobj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
         func = getattr(dobj, self.distance_metric)
+        D2 = np.empty((self.K, self.N))
+        for j in range(self.K):
+            for i in range(self.N):
+                d = func(self.pdf_matrix[i], Theta[j])
+                D2[j, i] = d**2 + self.eps
+        return D2
 
-        self.num_pdfs = self.pdf_matrix.shape[0]  # num_pdfs
-        self.num_clusters = self.num_clusters         # num_clusters
-        dist_matrix = np.zeros((self.num_pdfs, self.num_clusters))
+    def bregmanWassersteinBarycenter(D, M, lam, w, n_iter=50):
+        """
+        Sinkhorn barycenter
+        D: (n, K) mỗi cột là một PDF (sum=1)
+        M: (n, n) cost matrix
+        lam: regularization λ
+        w: (K,) trọng số
+        """
+        n, K = D.shape
+        xi = np.exp(-lam * M)
+        u = np.ones((n, K))
+        v = np.ones((n, K))
 
-        for i in range(self.num_pdfs):
-            for j in range(self.num_clusters):
-                distance = func(self.pdf_matrix[i], self.Theta[j])
-                dist_matrix[i, j] = distance**2 + 1e-10
-        return dist_matrix
- 
-    def _compute_distance_pair(self, x: np.ndarray, y: np.ndarray) -> float:
-        dobj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
-        func = getattr(dobj, self.distance_metric)
-        return float(func(x, y))
+        for _ in range(n_iter):
+            c = np.zeros((n,1))
+            for k in range(K):
+                u_xi_v = u[:,[k]] * (xi @ v[:,[k]])
+                u_xi_v = np.clip(u_xi_v, 1e-16, None)
+                c += w[k] * np.log(u_xi_v)
+            c = np.exp(c)
+
+            for k in range(K):
+                u[:,[k]] = c / (xi @ v[:,[k]])
+                v[:,[k]] = D[:,[k]] / (xi.T @ u[:,[k]])
+
+        return c / (c.sum() + 1e-12)
+
+    def _update_centroids(self, U) -> np.ndarray:
+        W = U ** self.m  # (K, N)
+        centroids = []
+
+        for k in range(self.K):
+            weights = W[k][:, None, None] if self.Dim == 2 else W[k][:, None]
+            den = np.sum(weights) + self.eps
+
+            # ---------------- Hellinger ----------------
+            if self.distance_metric == 'H':
+                num = np.sum(weights * np.sqrt(self.pdf_matrix), axis=0)
+                theta = (num / den) ** 2
+
+            # ---------------- L2 / L1 ----------------
+            elif self.distance_metric in ['L2', 'L1']:
+                num = np.sum(weights * self.pdf_matrix, axis=0)
+                theta = num / den
+
+            # ---------------- Wasserstein ----------------
+            elif self.distance_metric == 'W2':
+                if self.Dim == 1:
+                    G = len(self.grid_x)
+                    cdfs = np.cumsum(self.pdf_matrix, axis=1) * self.bandwidth
+                    cdfs = np.clip(cdfs, 0, 1)
+
+                    t = np.linspace(0, 1, G)
+                    invs = []
+                    for i in range(self.N):
+                        inv_f = np.interp(t, cdfs[i], self.grid_x)
+                        invs.append(inv_f)
+                    invs = np.stack(invs, axis=0)   # (N,G)
+
+                    inv_cent = np.sum(W[k][:, None] * invs, axis=0) / den
+                    F_cent = np.interp(self.grid_x, inv_cent, t)
+                    theta = np.gradient(F_cent, self.grid_x)
+
+                elif self.Dim == 2:
+                    # ====== Sinkhorn barycenter OT ======
+                    N, h, w = self.pdf_matrix.shape
+                    K = self.N
+
+                    # Flatten PDFs (N, h*w)
+                    pdfs_flat = self.pdf_matrix.reshape(N, h*w)
+
+                    # Weights cho cụm k
+                    wk = W[k] / (np.sum(W[k]) + self.eps)   # (N,)
+
+                    # chọn các pdf thuộc cụm (theo membership fuzzy)
+                    D = pdfs_flat.T   # (h*w, N)
+
+                    # Ma trận chi phí M (tính 1 lần, cache lại)
+                    if not hasattr(self, "_M") or self._M.shape[0] != h*w:
+                        coords = np.array([(i,j) for i in range(h) for j in range(w)], dtype=float) / h
+                        M = np.zeros((h*w, h*w))
+                        for i in range(h*w):
+                            for j in range(h*w):
+                                M[i,j] = np.sum((coords[i] - coords[j])**2)
+                        self._M = M
+
+                    # Barycenter Sinkhorn
+                    bary_flat = self.bregmanWassersteinBarycenter(
+                        D, self._M, lam=10.0, w=wk, n_iter=50
+                    )  # (h*w,1)
+
+                    theta = bary_flat.reshape(h, w)
+                else:
+                    raise NotImplementedError("Dim > 2 chưa hỗ trợ")
+
+            else:
+                raise ValueError(f"Unknown distance metric: {self.distance_metric}")
+
+            centroids.append(theta)
+
+        return np.stack(centroids, axis=0)
 
 
-    def _update_membership(self, distance_matrix: np.ndarray) -> np.ndarray:
-        """Cập nhật ma trận membership U."""
-        power = 2 / (self.fuzziness - 1)
-        inv_distance = 1.0 / (distance_matrix + 1e-10)
-        return inv_distance ** power / np.sum(inv_distance ** power, axis=1, keepdims=True)
 
-    def fit(self, pdf_matrix: np.ndarray) -> None:
-        """Huấn luyện FCM."""
-        self.pdf_matrix = pdf_matrix
-        self.num_pdfs, _ = pdf_matrix.shape
-
-        if self.seed is not None:
-            np.random.seed(self.seed)
-
-        # Khởi tạo U ngẫu nhiên (mỗi hàng sum=1)
-        self.membership_matrix = np.random.dirichlet(np.ones(self.num_clusters), size=self.num_pdfs) 
-
-        # Khởi tạo centroid từ dữ liệu
-        init_indices = np.random.choice(self.num_pdfs, self.num_clusters, replace=False)
-        self.Theta = pdf_matrix[init_indices, :]
+    # --------- cập nhật U ---------
+    def _update_U(self, D2):
+        U_new = np.zeros((self.K, self.N))
+        p = 1.0 / (self.m - 1.0)
+        for i in range(self.N):
+            # đúng công thức: (ω_i / D2_{ij})^p
+            vals = (D2[:, i]) ** p
+            U_new[:, i] = vals / (vals.sum() + self.eps)
+        return U_new
 
 
-        self.objective_history.clear()
 
-        for it in range(self.max_iterations):
-            
-            # Cap nhat Theta
-            self._update_centroids()
+    # --------- mục tiêu ---------
+    def _objective(self, U, D2):
+        return float(np.sum((U ** self.m) * D2))
 
-            # Tinh khoang cach 
-            dist_matrix = self._dist_matrix()
+    # --------- fit ---------
+    def fit(self, pdf_matrix):
+        self.pdf_matrix = np.asarray(pdf_matrix, dtype=float)
 
-            # Cap nhat U
-            new_U = self._update_membership(dist_matrix)
+        if self.pdf_matrix.ndim == 3:   # (N,h,w)
+            self.N, h, w = self.pdf_matrix.shape
+            self.pdf_shape = (h, w)
+        elif self.pdf_matrix.ndim == 2: # (N,G) 1D
+            self.N, self.G = self.pdf_matrix.shape
+            self.pdf_shape = (self.G,)
+        else:
+            raise ValueError("pdf_matrix phải (N,h,w) hoặc (N,G)")
 
-            # Tính hàm mục tiêu
-            self.objective_value = np.sum((new_U ** self.fuzziness) * dist_matrix)
-            self.objective_history.append(self.objective_value)
 
-            # Kiểm tra hội tụ
-            delta = np.linalg.norm(new_U - self.membership_matrix)
-            
+        rng = np.random.default_rng(self.seed)
+
+        # init U
+        self.U = rng.random((self.K, self.N))
+        self.U /= self.U.sum(axis=0, keepdims=True) + self.eps
+
+        # init Θ
+        if self.init == "random":
+            indices = rng.choice(self.N, size=self.K, replace=False)
+            if self.pdf_matrix.ndim == 2:
+                self.Theta = self.pdf_matrix[indices, :].copy()
+            else:
+                self.Theta = self.pdf_matrix[indices,:].copy()
+        else:
+            from utils.init import init_centroids_kmeanspp
+            self.Theta = init_centroids_kmeanspp(self.pdf_matrix, self.K, self.bandwidth,
+                                                 self.distance_metric, self.Dim, self.grid_x)
+
+
+        self.obj_hist = []
+        J_prev = None
+
+        for it in range(1, self.maxit + 1):
+
+            Theta_tm1 = self.Theta.copy()
+
+            # bước chính
+            D2 = self._dist2_matrix_to(Theta_tm1)
+            U_new = self._update_U(D2)
+            self.Theta = self._update_centroids(U_new)
+            J = self._objective(U_new, D2)
+
+            self.obj_hist.append(J)
+            dU = np.linalg.norm(U_new - self.U)
+            dTheta = np.linalg.norm(self.Theta - Theta_tm1)
+            dJ = abs(J - J_prev) if J_prev is not None else np.inf
+
             if self.verbose:
-                print(f"\n[Iteration {it + 1}]")
-                print(f"  - ΔU      = {delta:.6e}")
-                print(f"  - J(U,θ)  = {self.objective_value:.6f}")
-                print(f"  - Max(U)  = {np.max(new_U):.4f}, Min(U) = {np.min(new_U):.4f}")
+                print(f"[IFCM] it={it:03d} | dU={dU:.3e} | dTheta={dTheta:.3e} "
+                      f"| ΔJ={dJ:.3e} | J={J:.6e}")
 
-            if delta < self.tolerance:
-                if self.verbose:
-                    print(f"[Converged at iteration {it+1}] ΔU = {delta:.2e}")
+            self.U = U_new
+            self.D2 = D2
+
+            J_prev = J
+
+            if dJ < self.tol:
+                if self.verbose: print("Converged by ΔJ.")
                 break
 
-            self.membership_matrix = new_U
+        return self
 
+    # --------- predict ---------
+    def predict(self, new_pdfs):
+        Xn = np.asarray(new_pdfs, dtype=float)
+        Nn = Xn.shape[0]
+        f = self._fuzzy_sizes(self.U)
 
+        dobj = Dist(h=self.bandwidth, Dim=self.Dim, grid=self.grid_x)
+        func = getattr(dobj, self.distance_metric)
+        D2 = np.empty((self.K, Nn))
+        for j in range(self.K):
+            for i in range(Nn):
+                d = func(Xn[i], self.Theta[j]) + 1e-30
+                D2[j, i] = d**2
+        return self._update_U(f, D2)
 
-    def predict(self, new_pdfs: np.ndarray) -> np.ndarray:
-        """Dự đoán membership cho các PDF mới."""
-        if new_pdfs.ndim == 1:
-            new_pdfs = new_pdfs[np.newaxis, :]
-
-        memberships = []
-        for pdf in new_pdfs:
-            distances = np.array([
-                self._compute_distance_pair(pdf, self.Theta[j])**2 + 1e-10
-                for j in range(self.num_clusters)
-            ])
-            power = 2 / (self.fuzziness - 1)
-            inv_distance = 1.0 / distances
-            memberships.append(inv_distance ** power / np.sum(inv_distance ** power))
-
-        return np.array(memberships)
-
+    # --------- tiện ích ---------
     def get_results(self):
-        """Trả về U.T, centroids, và lịch sử hàm mục tiêu."""
-        return self.membership_matrix.T.copy(), self.Theta.copy(), self.objective_history.copy()
+        return self.U.copy(), self.Theta.copy(), list(self.obj_hist)
 
-    def get_hard_assignments(self) -> np.ndarray:
-        """Trả về nhãn cứng của từng PDF."""
-        return np.argmax(self.membership_matrix, axis=1)
-
-
+    def get_hard_assignments(self):
+        return np.argmax(self.U, axis=0)
