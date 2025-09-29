@@ -53,7 +53,7 @@ class Model:
             for i in range(self.num_pdfs):
                 d = func(self.pdf_matrix[i], Theta_t[j])
                 D2[j, i] = d + self.eps
-        return D2  # (K, N)
+        return D2**2  # (K, N)
 
     # --------------------------- D* theo (27) ---------------------------
     def _D_star(self, D2_t_1: np.ndarray) -> np.ndarray:
@@ -98,28 +98,34 @@ class Model:
         return delta_i_t
 
     # --------------------------- cập nhật Θ^(t) theo (37) --------------------------- 
-    def _update_centroids(self, U_t: np.ndarray) -> np.ndarray:
-        W = U_t ** self.fuzziness
+    def _update_centroids(self, U) -> np.ndarray:
+        W = U ** self.fuzziness  # (K, N)
+        centroids = []
+        for k in range(self.num_clusters):
+            weights = W[k][:, None, None] if self.Dim == 2 else W[k][:, None]
+            den = np.sum(weights) + self.eps
 
-        if self.distance_metric == 'H':
-            num = W @ np.sqrt(self.pdf_matrix)
-            den = np.sum(W, axis=1, keepdims=True)
-            return (num / (den + self.eps)) ** 2
+            if self.distance_metric == 'H':
+                if self.Dim == 2:
+                    num = np.sum(weights * np.sqrt(self.pdf_matrix), axis=0)
+                else:
+                    num = np.sum(weights * np.sqrt(self.pdf_matrix), axis=0)
+                theta = (num / den) ** 2
 
-        elif self.distance_metric in ['L2', 'L1']:
-            num = W @ self.pdf_matrix
-            den = np.sum(W, axis=1, keepdims=True)
-            return num / (den + self.eps)
+            elif self.distance_metric in ['L2', 'L1']:
+                if self.Dim == 2:
+                    num = np.sum(weights * self.pdf_matrix, axis=0)
+                else:
+                    num = np.sum(weights * self.pdf_matrix, axis=0)
+                theta = num / den
 
-        else:
-            G = len(self.grid_x)
-            cdfs = np.cumsum(self.pdf_matrix, axis=1) * self.bandwidth
-            cdfs = np.clip(cdfs, 0, 1)
-            t = np.linspace(0, 1, G)
-
-            centroids = []
-            for k in range(U_t.shape[0]):
-                weights = (U_t[k] ** self.fuzziness)[:, None]
+            else:
+                # xử lý Wasserstein / BC
+                G = len(self.grid_x)
+                cdfs = np.cumsum(self.pdf_matrix, axis=1) * self.bandwidth
+                cdfs = np.clip(cdfs, 0, 1)
+                t = np.linspace(0, 1, G)
+                weights = (U[k] ** self.fuzziness)[:, None]
                 invs = []
                 for i in range(self.pdf_matrix.shape[0]):
                     inv_f = np.interp(t, cdfs[i], self.grid_x)
@@ -130,8 +136,10 @@ class Model:
                 theta = np.gradient(F_cent, self.grid_x)
                 theta = np.clip(theta, 0, None)
                 theta /= np.trapz(theta, self.grid_x)
-                centroids.append(theta)
-            return np.stack(centroids, axis=0)
+
+            centroids.append(theta)
+
+        return np.stack(centroids, axis=0)
 
     # ------------------------- cập nhật U^(t) theo (35) -------------------------
     def _update_U(
@@ -176,14 +184,37 @@ class Model:
     def fit(self, pdf_matrix):
         X = np.asarray(pdf_matrix, dtype=float)
         self.pdf_matrix = X
-        self.num_pdfs, self.num_points = X.shape
+        self.num_pdfs = self.pdf_matrix.shape[0]   # <<< thêm dòng này
+        
+        if self.pdf_matrix.ndim == 3:   # (N,h,w)
+            _, h, w = self.pdf_matrix.shape
+            self.pdf_shape = (h, w)
+        elif self.pdf_matrix.ndim == 2: # (N,G)
+            _, G = self.pdf_matrix.shape
+            self.pdf_shape = (G,)
+        else:
+            raise ValueError("pdf_matrix phải (N,h,w) hoặc (N,G)")
 
-        # --- Khởi tạo Θ^0 bằng kmeans++ ---
-        from utils.init import init_centroids_kmeanspp
-        Theta_0 = init_centroids_kmeanspp(
-            X, self.num_clusters, self.bandwidth,
-            self.distance_metric, self.Dim, self.grid_x
-        )
+
+        rng = np.random.default_rng(self.seed)
+
+        # init U
+        self.U = rng.random((self.num_clusters, self.num_pdfs))
+        self.U /= self.U.sum(axis=0, keepdims=True) + self.eps
+
+        # init Θ
+        if self.init == "random":
+            indices = rng.choice(self.num_pdfs, size=self.num_clusters, replace=False)
+            if self.pdf_matrix.ndim == 2:
+                Theta_0 = self.pdf_matrix[indices, :].copy()
+            else:
+                Theta_0 = self.pdf_matrix[indices,:].copy()
+        else:
+            from utils.init import init_centroids_kmeanspp
+            Theta_0 = init_centroids_kmeanspp(self.pdf_matrix, self.num_clusters, self.bandwidth,
+                                                 self.distance_metric, self.Dim, self.grid_x)
+
+
 
         # --- δ_i^0 = 0 ---
         delta_i_0 = np.zeros(self.num_pdfs, dtype=float)

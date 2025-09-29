@@ -94,7 +94,25 @@ class Model:
                     
                 theta = num / den
             else:
-                raise NotImplementedError("W2 chưa hỗ trợ cho 2D")
+                if self.Dim == 2:
+                    raise NotImplementedError(f"Khoảng cách {self.distance_metric} chưa được hỗ trợ cho IFCF 2D.")
+                else:
+                    # xử lý Wasserstein / BC
+                    G = len(self.grid_x)
+                    cdfs = np.cumsum(self.pdf_matrix, axis=1) * self.bandwidth
+                    cdfs = np.clip(cdfs, 0, 1)
+                    t = np.linspace(0, 1, G)
+                    weights = (U[k] ** self.m)[:, None]
+                    invs = []
+                    for i in range(self.pdf_matrix.shape[0]):
+                        inv_f = np.interp(t, cdfs[i], self.grid_x)
+                        invs.append(inv_f)
+                    invs = np.stack(invs, axis=0)
+                    inv_cent = np.sum(weights * invs, axis=0) / (np.sum(weights) + self.eps)
+                    F_cent = np.interp(self.grid_x, inv_cent, t)
+                    theta = np.gradient(F_cent, self.grid_x)
+                    theta = np.clip(theta, 0, None)
+                    theta /= np.trapz(theta, self.grid_x)
 
             centroids.append(theta)
 
@@ -105,13 +123,15 @@ class Model:
 
     # --------- cập nhật U ---------
     def _update_U(self, f, D2):
+        # D2 shape: (K, N)  -> khoảng cách cụm i đến điểm j
         U_new = np.zeros((self.K, self.N))
-        p = 1.0 / (self.m - 1.0)
-        for i in range(self.N):
-            # đúng công thức: (ω_i / D2_{ij})^p
-            vals = (f / D2[:, i]) ** p
-            U_new[:, i] = vals / (vals.sum() + self.eps)
+        for j in range(self.N):          # qua từng điểm
+            for i in range(self.K):      # qua từng cụm
+                num = (f[i] / D2[i, j]) ** (1.0 / (self.m - 1))
+                U_new[i, j] = num / np.sum((f[:] / D2[:, j]) ** (1.0 / (self.m - 1)))
+
         return U_new
+
 
 
 
